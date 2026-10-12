@@ -1,0 +1,157 @@
+name: Release
+
+# Triggers: push a tag such as v0.2.0, or run by hand with a version, which creates the tag on that commit.
+# Version: stamped into fxmanifest.lua inside the zip only; nothing is committed back.
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to release, without the v (for example 0.2.0)'
+        required: true
+        type: string
+      prerelease:
+        description: 'Mark as a pre-release'
+        required: false
+        default: false
+        type: boolean
+      replace:
+        description: 'Delete an existing release and tag of this version first'
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  test:
+    name: Tests
+    uses: ./.github/workflows/ci.yml
+
+  release:
+    name: Build and publish
+    needs: test
+    runs-on: ubuntu-latest
+    env:
+      RESOURCE: atlas-agent
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Work out the version
+        id: ver
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+          REPLACE: ${{ inputs.replace }}
+        run: |
+          if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
+            VERSION="${INPUT_VERSION#v}"
+          else
+            VERSION="${GITHUB_REF_NAME#v}"
+          fi
+          if ! printf '%s' "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$'; then
+            echo "::error::'$VERSION' is not a version like 1.2.3 or 1.2.3-beta.1"
+            exit 1
+          fi
+          if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ] && [ "${REPLACE}" != "true" ] && git ls-remote --exit-code --tags origin "refs/tags/v${VERSION}" >/dev/null 2>&1; then
+            echo "::error::Tag v${VERSION} already exists. Pick a new version."
+            exit 1
+          fi
+          case "$VERSION" in *-*) PRE=true ;; *) PRE=false ;; esac
+          if [ "${{ inputs.prerelease }}" = "true" ]; then PRE=true; fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
+          echo "prerelease=$PRE" >> "$GITHUB_OUTPUT"
+          echo "zip=${RESOURCE}-v${VERSION}.zip" >> "$GITHUB_OUTPUT"
+
+      - name: Stage the resource folder
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          mkdir -p "staging/${RESOURCE}"
+          cp fxmanifest.lua config.lua README.md "staging/${RESOURCE}/"
+          if [ -f LICENSE ]; then cp LICENSE "staging/${RESOURCE}/"; fi
+          cp -r client server "staging/${RESOURCE}/"
+          # Version: stamps the release version into the shipped manifest
+          sed -i -E "s/^version '[^']*'/version '${VERSION}'/" "staging/${RESOURCE}/fxmanifest.lua"
+          sed -i -E "s/^name '[^']*'/name '${RESOURCE}'/" "staging/${RESOURCE}/fxmanifest.lua"
+          grep -q "^version '${VERSION}'" "staging/${RESOURCE}/fxmanifest.lua"
+          grep -q "^name '${RESOURCE}'" "staging/${RESOURCE}/fxmanifest.lua"
+
+      - name: Check the package
+        run: |
+          cd "staging/${RESOURCE}"
+          # Manifest: every file it loads must be in the package
+          grep -oE "'[A-Za-z0-9_./-]+\.(lua|js)'" fxmanifest.lua | tr -d "'" | sort -u | while read -r f; do
+            [ -f "$f" ] || { echo "::error::fxmanifest.lua lists $f but it is not in the package"; exit 1; }
+          done
+          # Exclusions: dev files, runtime data and secrets must not ship
+          for bad in tests .github docs spool .env; do
+            [ ! -e "$bad" ] || { echo "::error::$bad must not ship"; exit 1; }
+          done
+
+      - name: Build the zip
+        id: pack
+        env:
+          ASSET: ${{ steps.ver.outputs.zip }}
+        run: |
+          cd staging
+          zip -r -X "../${ASSET}" "${RESOURCE}"
+          cd ..
+          # Layout: the zip has exactly one top-level folder, named after the resource
+          TOP=$(unzip -Z1 "${ASSET}" | cut -d/ -f1 | sort -u)
+          [ "$TOP" = "${RESOURCE}" ] || { echo "::error::zip top level is '$TOP', expected '${RESOURCE}'"; exit 1; }
+          unzip -Z1 "${ASSET}" | grep -qx "${RESOURCE}/fxmanifest.lua"
+          sha256sum "${ASSET}" > "${ASSET}.sha256"
+          cat "${ASSET}.sha256"
+
+      - name: Write release notes
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+          ASSET: ${{ steps.ver.outputs.zip }}
+        run: |
+          {
+            echo "Download \`${ASSET}\` below and extract the \`${RESOURCE}\` folder into your server's \`resources\` directory."
+            echo
+            echo "Then add this to \`server.cfg\`. Your Atlas dashboard shows these lines with your own token:"
+            echo
+            echo '```cfg'
+            echo 'set atlas:endpoint "https://your-atlas-address"'
+            echo 'set atlas:token "atl_live_..."'
+            echo "ensure ${RESOURCE}"
+            echo '```'
+            echo
+            echo "Setup guide: https://github.com/${GITHUB_REPOSITORY}#install"
+            echo
+          } > release-notes.md
+
+      - name: Remove the existing release
+        if: ${{ inputs.replace }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.ver.outputs.tag }}
+        run: |
+          # Replace: deletes the release and its tag, so the new release and tag point at this commit
+          if gh release view "$TAG" >/dev/null 2>&1; then gh release delete "$TAG" --yes; fi
+          if git ls-remote --exit-code --tags origin "refs/tags/${TAG}" >/dev/null 2>&1; then git push origin ":refs/tags/${TAG}"; fi
+
+      - name: Publish the release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.ver.outputs.tag }}
+          target_commitish: ${{ github.sha }}
+          name: Atlas Agent ${{ steps.ver.outputs.tag }}
+          body_path: release-notes.md
+          generate_release_notes: true
+          prerelease: ${{ steps.ver.outputs.prerelease }}
+          files: |
+            ${{ steps.ver.outputs.zip }}
+            ${{ steps.ver.outputs.zip }}.sha256

@@ -1,0 +1,32 @@
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install Lua 5.4
+        run: sudo apt-get update && sudo apt-get install -y lua5.4
+
+      - name: Transport tests (Node)
+        run: node tests/transport.test.js
+
+      - name: Lua specs
+        run: lua5.4 tests/run.lua

@@ -1,0 +1,273 @@
+local fx = load_module('tests/fivem.lua')
+
+local PISTOL = fx.joaat('WEAPON_PISTOL')
+
+local function boot(convars)
+    convars = convars or {}
+    convars['atlas:token'] = 'atl_live_x'
+    fx.boot({ convars = convars, load = { 'server/sampler.lua', 'server/adapters/detect.lua', 'server/adapters/natives.lua' } })
+    fx.set('NetworkGetEntityFromNetworkId', function(id) return id end)
+    fx.set('DoesEntityExist', function() return true end)
+    fx.set('GetEntityType', function(ent) return ent < 5000 and 1 or 3 end)
+    fx.set('IsPedAPlayer', function(ent) return fx.state.players[ent - 1000] ~= nil end)
+    fx.set('NetworkGetEntityOwner', function(ent) return ent - 1000 end)
+end
+
+local function online(src, ped)
+    fx.addPlayer(src, { ped = ped or { x = 10.0 * src, y = 10.0, z = 30.0, h = 0.0 } })
+    return Atlas.ensurePlayer(src)
+end
+
+local function events(etype)
+    Atlas.jsReady = true
+    Atlas.flush()
+    local out = {}
+    for _, call in ipairs(fx.triggered('atlas:internal:batch')) do
+        for _, ev in ipairs(call[1]) do
+            if ev.type == etype then out[#out + 1] = ev end
+        end
+    end
+    return out
+end
+
+local function hit(attacker, victim, over)
+    local data = { hitGlobalId = 1000 + victim, weaponType = PISTOL, weaponDamage = 25, willKill = false }
+    for k, v in pairs(over or {}) do data[k] = v end
+    fx.net('weaponDamageEvent', nil, attacker, data)
+end
+
+describe('natives sessions', function()
+    it('records a connection attempt without the IP address', function()
+        boot()
+        fx.addPlayer('net:5', { identifiers = { 'license:aaa', 'ip:1.2.3.4', 'discord:9' } })
+        fx.net('playerConnecting', 'net:5', 'Ann')
+        local ev = events('session.connecting')[1]
+        expect(ev.data.name).toBe('Ann')
+        expect(ev.data.identifiers.license).toBe('license:aaa')
+        expect(ev.data.identifiers.ip).toBeNil()
+        fx.teardown()
+    end)
+
+    it('starts one session on join with the connect time and ignores a repeat', function()
+        boot()
+        fx.addPlayer('net:5', {})
+        fx.net('playerConnecting', 'net:5', 'Ann')
+        fx.advance(1500)
+        online(5)
+        fx.net('playerJoining', 5, 'net:5')
+        fx.net('playerJoining', 5, 'net:5')
+        local starts = events('session.start')
+        expect(#starts).toBe(1)
+        expect(starts[1].data.connect_ms >= 1500).toBe(true)
+        expect(starts[1].data.session_id:find(Atlas.boot, 1, true) ~= nil).toBe(true)
+        expect(starts[1].data.identifiers.ip).toBeNil()
+        fx.teardown()
+    end)
+
+    it('ends the session on drop after running the drop callbacks, then forgets the player', function()
+        boot()
+        local seen
+        Atlas.onDrop(function(p, reason) seen = reason end)
+        online(5)
+        fx.net('playerJoining', 5, 'net:5')
+        fx.advance(2000)
+        fx.net('playerDropped', 5, string.rep('x', 400))
+        local ev = events('session.end')[1]
+        expect(seen ~= nil).toBe(true)
+        expect(#ev.data.reason).toBe(256)
+        expect(ev.data.duration_ms >= 2000).toBe(true)
+        expect(Atlas.players[5]).toBeNil()
+        fx.teardown()
+    end)
+
+    it('ignores a drop for a player it never saw', function()
+        boot()
+        fx.net('playerDropped', 99, 'quit')
+        expect(#events('session.end')).toBe(0)
+        fx.teardown()
+    end)
+
+    it('gives players already online at start a resumed session', function()
+        boot()
+        fx.addPlayer(3, { ped = { x = 1.0, y = 1.0, z = 1.0 } })
+        fx.tick(); fx.tick()
+        local ev = events('session.start')[1]
+        expect(ev.src).toBe(3)
+        expect(ev.data.resumed).toBe(true)
+        fx.teardown()
+    end)
+end)
+
+describe('natives combat', function()
+    it('maps a hit on a player and remembers a lethal one for the death record', function()
+        boot()
+        local attacker, victim = online(1), online(2)
+        Atlas.setChar(1, 'KILLER01', 'K')
+        Atlas.setChar(2, 'VICTIM02', 'V')
+        hit(1, 2, { willKill = true })
+        local ev = events('combat.damage')[1]
+        expect(ev.src).toBe(1)
+        expect(ev.data.victim.src).toBe(2)
+        expect(ev.data.victim.char).toBe('VICTIM02')
+        expect(ev.data.victim.npc).toBe(false)
+        expect(ev.data.will_kill).toBe(true)
+        expect(ev.data.dmg).toBe(25)
+        expect(ev.data.weapon).toBe(AtlasLib.common.u32(PISTOL))
+        expect(Atlas.lastLethal[2].char).toBe('KILLER01')
+        expect(attacker.weapons[AtlasLib.common.u32(PISTOL)] ~= nil).toBe(true)
+        expect(victim.weapons[AtlasLib.common.u32(PISTOL)]).toBeNil()
+        fx.teardown()
+    end)
+
+    it('marks an NPC victim and ignores entities that are not peds', function()
+        boot()
+        online(1)
+        fx.state.players[3001] = { ped = { x = 5.0, y = 5.0, z = 5.0 } }
+        fx.set('IsPedAPlayer', function() return false end)
+        fx.net('weaponDamageEvent', nil, 1, { hitGlobalId = 4001, weaponType = PISTOL, weaponDamage = 5 })
+        fx.net('weaponDamageEvent', nil, 1, { hitGlobalId = 9000, weaponType = PISTOL, weaponDamage = 5 })
+        local dmg = events('combat.damage')
+        expect(#dmg).toBe(1)
+        expect(dmg[1].data.victim.npc).toBe(true)
+        expect(dmg[1].data.victim.src).toBeNil()
+        fx.teardown()
+    end)
+
+    it('ignores damage events without a target or with the wrong shape', function()
+        boot()
+        online(1)
+        fx.net('weaponDamageEvent', nil, 1, { weaponType = PISTOL })
+        fx.net('weaponDamageEvent', nil, 1, { hitGlobalId = 0 })
+        fx.net('weaponDamageEvent', nil, 1, 'junk')
+        expect(#events('combat.damage')).toBe(0)
+        fx.teardown()
+    end)
+
+    it('reads the first target of a multi-hit event', function()
+        boot()
+        online(1); online(2)
+        fx.net('weaponDamageEvent', nil, 1, { hitGlobalIds = { 1002 }, weaponType = PISTOL, weaponDamage = 5 })
+        expect(events('combat.damage')[1].data.victim.src).toBe(2)
+        fx.teardown()
+    end)
+
+    it('starts a combat boost where the hit landed', function()
+        boot()
+        online(1); online(2)
+        fx.advance(300)
+        hit(1, 2)
+        expect(Atlas.sampler.boostUntil[1] ~= nil).toBe(true)
+        fx.teardown()
+    end)
+
+    it('caps damage events at 100 per second per sender and counts the rest', function()
+        boot()
+        online(1); online(2); online(3)
+        for _ = 1, 150 do hit(1, 2) end
+        hit(3, 2)
+        expect(#events('combat.damage')).toBe(101)
+        expect(Atlas.drops.damage_rate).toBe(50)
+        fx.advance(1500)
+        hit(1, 2)
+        expect(#events('combat.damage')).toBe(102)
+        fx.teardown()
+    end)
+
+    it('records an explosion with its position and caps spam at 20 per second', function()
+        boot()
+        online(1)
+        for _ = 1, 30 do
+            fx.net('explosionEvent', nil, 1, { posX = 10.04, posY = 20.06, posZ = 3.0, explosionType = 2, damageScale = 1.0 })
+        end
+        local ev = events('combat.explosion')
+        expect(#ev).toBe(20)
+        expect(ev[1].pos).toEqual({ 10.0, 20.1, 3.0 })
+        expect(ev[1].data.etype).toBe(2)
+        expect(Atlas.drops.explosion_rate).toBe(10)
+        fx.teardown()
+    end)
+
+    it('forgets rate windows when a player drops', function()
+        boot()
+        online(1); online(2)
+        for _ = 1, 100 do hit(1, 2) end
+        fx.net('playerDropped', 1, 'quit')
+        online(1)
+        for _ = 1, 100 do hit(1, 2) end
+        expect(Atlas.drops.damage_rate).toBeNil()
+        fx.teardown()
+    end)
+end)
+
+describe('natives lifecycle and chat', function()
+    it('reports other resources starting and stopping but never itself', function()
+        boot()
+        fx.net('onResourceStart', nil, 'qbx_core')
+        fx.net('onResourceStart', nil, Atlas.resource)
+        fx.net('onResourceStop', nil, 'qbx_core')
+        fx.net('onResourceStop', nil, Atlas.resource)
+        local ev = events('resource.lifecycle')
+        expect(#ev).toBe(2)
+        expect(ev[1].data.state).toBe('started')
+        expect(ev[1].data.name).toBe('qbx_core')
+        expect(ev[2].data.state).toBe('stopped')
+        fx.teardown()
+    end)
+
+    it('records chat length and command by default and text only when enabled', function()
+        boot()
+        fx.net('chatMessage', nil, 4, 'Ann', '/me waves')
+        local e = events('chat.message')[1]
+        expect(e.data.len).toBe(9)
+        expect(e.data.command).toBe('/me')
+        expect(e.data.text).toBeNil()
+        fx.teardown()
+        boot({ ['atlas:chat_content'] = 1 })
+        fx.net('chatMessage', nil, 4, 'Ann', 'hello')
+        expect(events('chat.message')[1].data.text).toBe('hello')
+        fx.teardown()
+    end)
+
+    it('turns txAdmin actions into admin.action without target identifiers', function()
+        boot()
+        online(4)
+        Atlas.setChar(4, 'CHAR0004', 'Four')
+        fx.net('txAdmin:events:playerKicked', nil, { target = 4, author = 'admin', reason = 'afk', targetIds = { 'ip:1.2.3.4' } })
+        fx.net('txAdmin:events:playerBanned', nil, { targetNetId = 4, author = 'admin', reason = 'cheat', durationTranslated = '2 days' })
+        local ev = events('admin.action')
+        expect(ev[1].data.action).toBe('kick')
+        expect(ev[1].data.target_char).toBe('CHAR0004')
+        expect(ev[1].data.targetIds).toBeNil()
+        expect(ev[2].data.detail).toBe('cheat (2 days)')
+        fx.teardown()
+    end)
+
+    it('announces a scheduled restart once, inside the last minute', function()
+        boot()
+        fx.net('txAdmin:events:scheduledRestart', nil, { secondsRemaining = 900 })
+        fx.net('txAdmin:events:scheduledRestart', nil, { secondsRemaining = 60 })
+        fx.net('txAdmin:events:scheduledRestart', nil, { secondsRemaining = 30 })
+        local ev = events('server.annotation')
+        expect(#ev).toBe(1)
+        expect(ev[1].data.kind).toBe('restart')
+        fx.teardown()
+    end)
+
+    it('announces again when a later restart countdown starts', function()
+        boot()
+        fx.net('txAdmin:events:scheduledRestart', nil, { secondsRemaining = 60 })
+        fx.net('txAdmin:events:scheduledRestart', nil, { secondsRemaining = 900 })
+        fx.net('txAdmin:events:scheduledRestart', nil, { secondsRemaining = 45 })
+        expect(#events('server.annotation')).toBe(2)
+        fx.teardown()
+    end)
+
+    it('flushes the buffer when the server is shutting down', function()
+        boot()
+        Atlas.jsReady = true
+        fx.net('txAdmin:events:serverShuttingDown', nil, { message = 'bye' })
+        expect(Atlas.bufferDepth()).toBe(0)
+        expect(#fx.triggered('atlas:internal:batch')).toBe(1)
+        fx.teardown()
+    end)
+end)

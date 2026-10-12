@@ -1,0 +1,18 @@
+# runtime data
+/spool/
+*.log
+
+# secrets and local config
+.env
+.env.*
+
+# editor, OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# release build output
+/staging/
+*.zip
