@@ -14,6 +14,7 @@ Atlas = {
     charToSrc = {},         -- charToSrc: character id to player id
     adapters = {},          -- adapters: names set to true while attached (detect.lua)
     drops = {},             -- drops: events lost per reason, sent in the heartbeat
+    consoleState = 'off',   -- consoleState: on, unsupported or off, set by console.lua
     js = nil,               -- js: latest stats sent by transport.js
     jsReady = false,
     stats = {
@@ -374,6 +375,7 @@ function Atlas.runDrop(p, reason)
 end
 
 -- Heartbeat: sent on an interval; transport.js adds its queue size and drop counts.
+-- Logs: the console capture state comes from console.lua.
 CreateThread(function()
     while true do
         Wait(cfg.heartbeatMs)
@@ -390,6 +392,7 @@ CreateThread(function()
                 drops = drops,
                 emit_us_avg = math.floor(Atlas.stats.emitEmaUs * 100 + 0.5) / 100,
                 players = #Atlas.playerList,
+                logs = { console = Atlas.consoleState },
             })
         end
     end
