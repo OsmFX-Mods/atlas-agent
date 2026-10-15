@@ -1,6 +1,6 @@
 'use strict';
-// Transport: sends event batches to the Atlas ingest API; runs on FXServer's default Node runtime (16.x).
-// Structure: createTransport is a plain factory so plain Node can test it; the FiveM wiring is at the bottom.
+// Transport: sends event batches to Atlas; runs on FXServer's default Node 16.
+// createTransport can be tested with plain Node; the FiveM wiring is at the bottom.
 
 const http = require('http');
 const https = require('https');
@@ -10,8 +10,8 @@ const fsp = fs.promises;
 const path = require('path');
 const { URL } = require('url');
 
-// Defaults: batches close at 1 s, 1000 events or 4 MB; memory holds 50k events before spilling to a 200 MB disk spool.
-// Replay: spooled events are replayed at 5k events/s ahead of newer ones.
+// Defaults: a batch goes out after 1 s, 1000 events or 4 MB; 50,000 events wait in memory before moving to a 200 MB disk spool.
+// Saved events are sent at 5,000 per second, ahead of newer ones.
 const DEFAULTS = {
   batchEvents: 1000,
   batchBytes: 4 * 1024 * 1024,
@@ -19,8 +19,8 @@ const DEFAULTS = {
   memEvents: 50000,
   spillChunk: 10000,
   spoolBytes: 200 * 1024 * 1024,
-  replayRate: 5000,              // replayRate: events per second
-  replayFlagAgeMs: 14 * 86400000, // replayFlagAgeMs: batches with older events get the X-Atlas-Replay header
+  replayRate: 5000,              // replayRate: saved events sent per second
+  replayFlagAgeMs: 14 * 86400000, // replayFlagAgeMs: batches with events older than this get the X-Atlas-Replay header
   backoffMinMs: 1000,
   backoffMaxMs: 30000,
   authBackoffMs: 30000,
@@ -28,7 +28,7 @@ const DEFAULTS = {
   pumpMs: 100,
 };
 
-// Object keys: Lua cannot tell an empty table from an empty array, so msgpack may deliver [] where {} is meant.
+// Object keys: Lua cannot tell an empty list from an empty object, so these keys are always sent as objects.
 const OBJECT_KEYS = new Set(['data', 'actor', 'from', 'to', 'drops', 'identifiers', 'victim', 'veh']);
 
 function replacer(key, value) {
@@ -37,7 +37,7 @@ function replacer(key, value) {
   return value;
 }
 
-// Spool prefix: written in a fixed key order so replay can parse lines without JSON.parse.
+// Saved events start with fixed fields in a fixed order, so they can be read back without full JSON parsing.
 const PREFIX_RE = /^\{"v":1,"type":"([^"]*)","ts":(\d+),"seq":(\d+),"boot":"([0-9A-Z]{26})"/;
 const SEG_RE = /^([0-9A-Z]{26})-(\d{12})-(\d{12})-(\d+)\.ndjson\.gz$/;
 
@@ -68,8 +68,8 @@ function isLoopback(host) {
 
 function pad12(n) { return String(n).padStart(12, '0'); }
 
-// Queue order: in-flight batch, then spool segments oldest first, then memory.
-// Spill: memory over the limit moves the oldest events to disk; a full spool drops position.sample first, then segments.
+// Send order: the batch in progress, then saved files oldest first, then memory.
+// Spill: full memory moves the oldest events to disk; a full disk drops position samples first, then whole files.
 function createTransport(options) {
   const o = Object.assign({}, DEFAULTS, options);
   const log = o.log || ((m) => console.log('[atlas] ' + m));
@@ -78,22 +78,22 @@ function createTransport(options) {
   let url = null;
   try { url = new URL(o.endpoint.replace(/\/+$/, '') + '/ingest/v1/events'); } catch (e) { url = null; }
   const secure = url && url.protocol === 'https:';
-  const insecureRemote = !!url && !secure && !isLoopback(url.hostname); // insecureRemote: the token would travel unencrypted
+  const insecureRemote = !!url && !secure && !isLoopback(url.hostname); // insecureRemote: true if the token would be sent without encryption
   const gzip = url ? !isLoopback(url.hostname) : false;
   const agent = url ? new (secure ? https : http).Agent({ keepAlive: true, maxSockets: 1 }) : null;
 
   const st = {
     boot: null,
     refused: null,
-    mem: [], memHead: 0,       // mem: array with a head index for O(1) dequeue
-    spool: [],                 // spool: segments, oldest first
+    mem: [], memHead: 0,       // mem: waiting events; memHead is the next one to send
+    spool: [],                 // spool: saved files, oldest first
     inflight: null,
     nextAttemptAt: 0,
     backoff: o.backoffMinMs,
     replayNextAt: 0,
     capRunning: false,
     stopped: false,
-    spoolLoaded: false,        // spoolLoaded: the pump waits until old spool segments are indexed
+    spoolLoaded: false,        // spoolLoaded: sending waits until saved files from earlier runs are listed
     limitEvents: o.batchEvents,
     limitBytes: o.batchBytes,
     drops: {},
@@ -160,7 +160,7 @@ function createTransport(options) {
     return b;
   }
 
-  // Intake: events from Lua are serialised and queued.
+  // Intake: events from Lua are converted to JSON lines and queued.
   function push(events) {
     if (st.refused || !st.boot || !Array.isArray(events)) return;
     const t0 = process.hrtime.bigint();
@@ -169,7 +169,7 @@ function createTransport(options) {
       const ev = events[i];
       if (!ev || typeof ev !== 'object') continue;
       if (ev.type === 'agent.heartbeat' && ev.data && typeof ev.data === 'object') {
-        // Heartbeat: adds the transport queue depth and drop counters
+        // Heartbeat: adds the transport queue size and drop counts
         ev.data.queue = (num(ev.data.queue) || 0) + queueDepth();
         const d = Array.isArray(ev.data.drops) ? {} : Object.assign({}, ev.data.drops || {});
         for (const k of Object.keys(st.drops)) d['js_' + k] = st.drops[k];
@@ -191,7 +191,7 @@ function createTransport(options) {
     if (st.stopped) persistSync();
   }
 
-  // Spool: spilled events are written as gzip NDJSON segments under spool/ (async fs).
+  // Spool: spilled events are saved as compressed files in the spool folder.
   function segName(s) { return `${s.boot}-${pad12(s.first)}-${pad12(s.last)}-${s.count}.ndjson.gz`; }
 
   function spill(n) {
@@ -200,20 +200,20 @@ function createTransport(options) {
     const seg = {
       boot: st.boot, first: items[0].seq, last: items[items.length - 1].seq, count: items.length,
       lines: items, pos: 0, written: false, writing: true, done: false, file: null,
-      bytes: Math.ceil(items.reduce((a, e) => a + e.line.length + 1, 0) / 6), // bytes: estimate until the segment is written
+      bytes: Math.ceil(items.reduce((a, e) => a + e.line.length + 1, 0) / 6), // bytes: estimated until the file is written
       stripped: false,
     };
     st.spool.push(seg);
     writeSegment(seg, seg.lines).then(() => {
       if (seg.done) { unlink(seg); return; }
-      // Memory: only the segment being replayed keeps its lines
+      // Memory: only the file being sent keeps its lines
       if (st.spool[0] !== seg) seg.lines = null;
       enforceCap();
     }).catch((e) => {
       seg.writing = false;
       st.lastError = 'spool write failed: ' + e.message;
       logOnce('spoolw', 'spool write failed: ' + e.message);
-      // Bound: only the segment being replayed may stay in memory, so later unwritable segments are dropped
+      // Limit: only the file being sent may stay in memory, so later files that cannot be saved are dropped
       if (st.spool[0] !== seg && !seg.done) {
         drop('spool_write_failed', seg.count);
         finishSegment(seg);
@@ -275,7 +275,7 @@ function createTransport(options) {
     if (seg.written) unlink(seg);
   }
 
-  // Cap: strips position.sample from the oldest segments first, then deletes whole oldest segments; one async pass at a time.
+  // Cap: drops position samples from the oldest files first, then the oldest files; one pass at a time.
   async function enforceCap() {
     if (st.capRunning) return;
     st.capRunning = true;
@@ -296,7 +296,7 @@ function createTransport(options) {
         drop('spool_cap_position', removed);
         if (kept.length === 0) { finishSegment(seg); continue; }
         seg.count = kept.length;
-        seg.capping = true; // capping: keeps replay off this segment while its lines are swapped for the stripped ones
+        seg.capping = true; // capping: stops sending from this file while it is rewritten
         try {
           await writeSegment(seg, kept);
           if (seg.lines) seg.lines = kept;
@@ -304,7 +304,7 @@ function createTransport(options) {
           seg.capping = false;
         }
       }
-      // Delete: still over the cap, so whole segments go, oldest first
+      // Delete: still over the limit, so whole files go, oldest first
       while (spoolBytes() > o.spoolBytes && st.spool.length > 1) {
         const seg = st.spool.find((s) => !(st.inflight && st.inflight.seg === s) && s.written && !s.writing);
         if (!seg) break;
@@ -343,12 +343,12 @@ function createTransport(options) {
         lines: null, pos: 0, written: true, writing: false, done: false, stripped: false });
     }
     segs.sort((a, b) => (a.boot < b.boot ? -1 : a.boot > b.boot ? 1 : a.first - b.first));
-    // Order: indexed segments predate this start, so they go to the front
+    // Order: these files are from earlier runs, so they go first
     st.spool = segs.concat(st.spool);
     if (segs.length) log(`spool: ${segs.length} segment(s), ${segs.reduce((a, s) => a + s.count, 0)} events to replay`);
   }
 
-  /** Persist: writes everything not yet acked synchronously, on resource stop. */
+  /** Persist: on stop, saves everything Atlas has not yet confirmed. */
   function persistSync() {
     if (!o.spoolDir) return;
     try {
@@ -371,7 +371,7 @@ function createTransport(options) {
     }
   }
 
-  // Send: one batch in flight in seq order, gzip unless the endpoint is loopback, keep-alive.
+  // Send: one batch at a time, in order; compressed unless the endpoint is on this machine.
   function nextBatch(t) {
     if (st.spool.length) {
       const seg = st.spool[0];
@@ -397,7 +397,7 @@ function createTransport(options) {
     return { seg: null, boot: st.boot, items: memTake(st.limitEvents, st.limitBytes) };
   }
 
-  /** Requeue: returns an unsent batch to where it came from, keeping order. */
+  /** Requeue: puts an unsent batch back in front, keeping the order. */
   function requeue(b) {
     if (!b.seg) memUnshift(b.items);
   }
@@ -424,7 +424,7 @@ function createTransport(options) {
 
   function backoff(b, err) {
     retryLater(b, st.backoff, err);
-    logOnce('neterr', `daemon unreachable (${err}); retrying, ${queueDepth()} events queued`);
+    logOnce('neterr', `Atlas unreachable (${err}); retrying, ${queueDepth()} events queued`);
     st.backoff = Math.min(st.backoff * 2, o.backoffMaxMs);
   }
 
@@ -433,7 +433,7 @@ function createTransport(options) {
     const body = Buffer.from(b.items.map((e) => e.line).join('\n') + '\n', 'utf8');
     const t = now();
     const replay = b.items.some((e) => t - e.ts > o.replayFlagAgeMs);
-    // Settle: each attempt settles once, even if an error follows an end or a timeout
+    // Once: each attempt finishes once, even if an error follows
     let settled = false;
     const once = (fn) => (...args) => { if (!settled) { settled = true; fn(...args); } };
     const fail = once((err) => backoff(b, err));
@@ -475,7 +475,7 @@ function createTransport(options) {
       return;
     }
     if (status === 401 || status === 403) {
-      logOnce('auth', `^1daemon rejected the token (HTTP ${status}). Check atlas:token (re-copy it from the Atlas setup page).^7`, 60000);
+      logOnce('auth', `^1Atlas rejected the token (HTTP ${status}). Check atlas:token (re-copy it from the Atlas setup page).^7`, 60000);
       return retryLater(b, o.authBackoffMs, 'unauthorized');
     }
     if (status === 413) {
@@ -493,7 +493,7 @@ function createTransport(options) {
     }
     if (status === 400) {
       drop('malformed', b.items.length);
-      logOnce('400', `daemon rejected a batch as malformed (${b.items.length} events dropped): ${text.slice(0, 200)}`);
+      logOnce('400', `Atlas rejected a batch as malformed (${b.items.length} events dropped): ${text.slice(0, 200)}`);
       return ack(b, Infinity);
     }
     backoff(b, 'HTTP ' + status);
@@ -502,7 +502,7 @@ function createTransport(options) {
   function ack(b, acked) {
     const freed = b.items.filter((e) => e.seq <= acked).length;
     if (freed === 0 && acked !== Infinity) {
-      // Stall: the daemon acknowledged nothing of this batch, so back off instead of spinning
+      // Stalled: Atlas confirmed none of this batch, so wait before trying again
       b.stalls = (b.stalls || 0) + 1;
       if (b.stalls < 5) return backoff(b, 'ack below batch');
       drop('ack_stall', b.items.length);
@@ -516,7 +516,7 @@ function createTransport(options) {
     st.lastError = null;
     st.lastAckAt = now();
     if (acked !== Infinity) { st.ackedSeq = acked; st.ackedBoot = b.boot; }
-    // Recover: limits shrunk by a 413 grow back after a success
+    // Recover: limits cut after an HTTP 413 grow back after a success
     st.limitEvents = Math.min(o.batchEvents, st.limitEvents * 2);
     st.limitBytes = Math.min(o.batchBytes, st.limitBytes * 2);
     if (b.seg) {
@@ -574,10 +574,10 @@ function createTransport(options) {
   return { push, pump, start, stop, refuse, stats, loadSpoolDir, _state: st, _options: o, _enforceCap: enforceCap };
 }
 
-// Cfg scan: best-effort check of the server.cfg files FXServer started with (following exec lines) for setr or sets of the token.
-// Runtime: the client hash report in core.lua is the definitive check.
+// Config scan: looks in server.cfg (and files it execs) for the token set with setr or sets.
+// This is a quick check; the client report in core.lua is the reliable one.
 async function scanCfgForExposedToken(argv, cwd) {
-  // Command line: `+setr atlas:token ...` replicates the token just like a cfg line
+  // Command line: `+setr atlas:token ...` also sends the token to players
   for (let i = 0; i < argv.length - 1; i++) {
     const m = /^\+(setr|sets)$/i.exec(argv[i]);
     if (m && argv[i + 1].replace(/^"|"$/g, '').toLowerCase() === 'atlas:token') {
@@ -652,7 +652,7 @@ if (typeof GetCurrentResourceName === 'function' && typeof on === 'function') {
   on('atlas:internal:init', (info) => {
     if (!fromSelf() || initialised || !info || !info.boot) return;
     initialised = true;
-    // Order: boot is set first so batches arriving meanwhile are queued; sending starts once older spool segments are indexed
+    // Order: the boot id is set first so new batches queue; sending starts once saved files are listed
     transport.start(String(info.boot));
     transport.loadSpoolDir().catch((e) => log('spool index failed: ' + e.message));
     log(`transport ready (agent ${info.version}, boot ${info.boot}, endpoint ${endpoint})`);
@@ -677,6 +677,6 @@ if (typeof GetCurrentResourceName === 'function' && typeof on === 'function') {
 
   setInterval(() => emit('atlas:internal:stats', transport.stats()), 2000);
 
-  // Hello: announces this runtime in case core.lua loaded first
+  // Hello: says this script is ready, in case core.lua loaded first
   emit('atlas:internal:ready');
 }

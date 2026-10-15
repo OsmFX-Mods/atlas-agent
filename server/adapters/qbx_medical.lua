@@ -1,11 +1,11 @@
--- Medical adapter: qbx_medical respawn event and qbx_ambulancejob check-in hook (built against 1.0.0).
--- Hooks: registered on each resource's exports, since both load qbx_core's hook module into their own state.
+-- Medical adapter: qbx_medical respawns and qbx_ambulancejob check-ins (built against 1.0.0).
+-- Each resource has its own hooks, so they are added on that resource.
 
 local NAME_MED, NAME_AMB = 'qbx_medical', 'qbx_ambulancejob'
 local checkInCost -- checkInCost: read from qbx_ambulancejob config/shared.lua
 
--- playerRespawned: fired after qbx_medical's respawn hooks pass; emits medical.respawn and teleport.known 'respawn'.
--- Revive guard: marks the player as respawned, so the following state change is not reported as medical.revive (see qbox.lua).
+-- Respawn: sends medical.respawn and teleport.known after qbx_medical's respawn hooks pass.
+-- Marks the player as respawned, so the state change after it is not reported as a revive (see qbox.lua).
 AddEventHandler('qbx_medical:server:playerRespawned', function(src)
     if not Atlas.enabled or not Atlas.adapterActive(NAME_MED) then return end
     src = tonumber(src)
@@ -42,7 +42,7 @@ Atlas.registerAdapter({
 
         local amb = exports.qbx_ambulancejob
         amb:removeHooks()
-        -- checkIn: fires in canCheckIn() before a bed is assigned; emits medical.checkin
+        -- checkIn: fires before a bed is assigned; sends medical.checkin
         amb:registerHook('checkIn', onCheckIn)
     end,
 })

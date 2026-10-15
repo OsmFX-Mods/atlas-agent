@@ -1,5 +1,5 @@
 -- Natives adapter: framework-free and always attached.
--- Covers: sessions, combat (weaponDamageEvent, explosionEvent), resource lifecycle, txAdmin events and chat.
+-- Covers: sessions, combat, resource starts and stops, txAdmin events and chat.
 
 local cfg = AtlasConfig
 local common = AtlasLib.common
@@ -7,9 +7,9 @@ local u32 = common.u32
 
 local NAME = 'natives'
 local sessionCounter = 0
-local connectAt = {} -- connectAt: GetGameTimer at playerConnecting, keyed by temp id string
+local connectAt = {} -- connectAt: when each player started connecting, by temporary id
 
-Atlas.lastLethal = {} -- lastLethal: last lethal hit per victim src { src, char, weapon, gt }, used by the Qbox adapter for combat.death
+Atlas.lastLethal = {} -- lastLethal: the last killing hit per victim { src, char, weapon, gt }, used for combat.death
 
 local function newSessionId(src)
     sessionCounter = sessionCounter + 1
@@ -56,7 +56,7 @@ AddEventHandler('playerDropped', function(reason)
     local p = Atlas.players[src]
     if not p then return end
     if Atlas.enabled then
-        Atlas.runDrop(p, reason) -- drop callbacks: adapters run first, for example session.char_end
+        Atlas.runDrop(p, reason) -- Adapters run first, for example to send session.char_end
         Atlas.emit('session.end', {
             session_id = p.sessionId,
             reason = type(reason) == 'string' and reason:sub(1, 256) or nil,
@@ -78,8 +78,8 @@ CreateThread(function()
     end
 end)
 
--- Rate cap: events per second per sender and kind, since modded clients can flood the combat events.
-local rates = {} -- rates: window start and count per kind and sender
+-- Rate cap: limits events per second per player and kind, since modified clients can flood combat events.
+local rates = {} -- rates: window start and count per kind and player
 local function overRate(kind, src, limit)
     local gt = GetGameTimer()
     local byKind = rates[kind]
@@ -95,7 +95,7 @@ end
 AddEventHandler('weaponDamageEvent', function(sender, data)
     if not Atlas.enabled or type(data) ~= 'table' then return end
     local attacker = tonumber(sender)
-    if attacker and overRate('damage', attacker, 100) then return end
+    if attacker and overRate('damage', attacker, cfg.damageRatePerSec) then return end
     local netId = data.hitGlobalId
     if (not netId or netId == 0) and type(data.hitGlobalIds) == 'table' then netId = data.hitGlobalIds[1] end
     if not netId or netId == 0 then return end
@@ -117,7 +117,7 @@ AddEventHandler('weaponDamageEvent', function(sender, data)
         in_vehicle = GetVehiclePedIsIn(ent, false) ~= 0,
     }, attacker, { fresh = true })
 
-    -- Weapons: recorded to validate client shot reports
+    -- Weapons: remembered to check shot reports
     local ap = attacker and Atlas.players[attacker]
     if ap and weapon then Atlas.noteWeapon(ap, weapon, GetGameTimer()) end
 
@@ -130,7 +130,7 @@ end)
 AddEventHandler('explosionEvent', function(sender, ev)
     if not Atlas.enabled or type(ev) ~= 'table' then return end
     local src = tonumber(sender)
-    if src and overRate('explosion', src, 20) then return end
+    if src and overRate('explosion', src, cfg.explosionRatePerSec) then return end
 
     local x, y, z = tonumber(ev.posX), tonumber(ev.posY), tonumber(ev.posZ)
     Atlas.emit('combat.explosion', {
@@ -169,7 +169,7 @@ AddEventHandler('onResourceStop', function(res)
 end)
 
 -- txAdmin events: become admin.action and server.annotation.
--- Privacy: txAdmin target identifier lists can contain IPs, so they are never forwarded.
+-- Privacy: txAdmin identifier lists can contain IP addresses, so they are never sent.
 local function adminAction(action, target, by, detail)
     local src = tonumber(target)
     if src and src <= 0 then src = nil end
@@ -193,7 +193,7 @@ AddEventHandler('txAdmin:events:scheduledRestart', function(d)
     -- Countdown: the event fires at several steps, so it is recorded once near the end
     local s = tonumber(d.secondsRemaining) or 0
     if s > 60 then
-        restartAnnounced = false -- a countdown above a minute is a new one, for example after a cancelled restart
+        restartAnnounced = false -- A countdown above a minute is a new one, such as after a cancelled restart
     elseif not restartAnnounced then
         restartAnnounced = true
         Atlas.emit('server.annotation', { kind = 'restart', text = ('scheduled restart in %d s'):format(s) })

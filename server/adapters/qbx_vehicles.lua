@@ -1,5 +1,5 @@
--- Vehicles adapter: hooks on exports.qbx_vehicles, which has its own copy of qbx_core's hooks (built against 1.4.2).
--- Hooks: createPlayerVehicle emits vehicle.acquire, changeVehicleOwner emits vehicle.transfer; both fire before the DB write.
+-- Vehicles adapter: listens to qbx_vehicles hooks (built against 1.4.2).
+-- Hooks: createPlayerVehicle sends vehicle.acquire; changeVehicleOwner sends vehicle.transfer. Both run before the database write.
 
 local common = AtlasLib.common
 local NAME = 'qbx_vehicles'
@@ -32,7 +32,7 @@ local function onOwnerChange(p)
     if not active() or type(p) ~= 'table' then return true end
     local at = Atlas.now()
     local vehicleId, toChar = tonumber(p.vehicleId), p.newCitizenId
-    -- Model and plate: need a database read, and hooks must never yield, so a thread reads them and stamps the hook's time
+    -- Model and plate need a database read, which hooks cannot wait for, so a thread reads them
     CreateThread(function()
         local row = vehicleId and Atlas.db.single('SELECT hash, plate FROM player_vehicles WHERE id = ?', { vehicleId })
         local src = toChar and Atlas.charToSrc[toChar] or nil

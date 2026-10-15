@@ -1,5 +1,5 @@
--- Sandbox: evaluates another resource's plain-data config file so the places importer can read coordinates.
--- Unknown globals (lib, locale, Config helpers) resolve to an inert value so typical configs load; failures are skipped; pure.
+-- Sandbox: runs another resource's config file safely so the places importer can read its coordinates.
+-- Unknown names (lib, locale and so on) give a harmless empty value; files that fail to load are skipped.
 
 AtlasLib = AtlasLib or {}
 local M = {}
@@ -19,16 +19,16 @@ local function vec(...)
     return { x = a, y = b, z = c, w = d }
 end
 
-local HOOK_STEPS = 5000000 -- HOOK_STEPS: VM instructions before a config is aborted, about 50 ms of work
+local HOOK_STEPS = 5000000 -- Step limit: instructions allowed before a config is stopped (about 50 ms)
 
---- Copy: a shallow copy of a standard library table, so a config cannot change the real one.
+--- Copy: copies a standard library table, so a config cannot change the real one.
 local function copy(t)
     local out = {}
     for k, v in pairs(t) do out[k] = v end
     return out
 end
 
---- Guarded call: aborts a config that never returns, such as a loop on an inert value.
+--- Guarded call: stops a config that never ends, such as a loop on the empty value.
 local function guarded(fn)
     local hooked = debug and debug.sethook
         and pcall(debug.sethook, function() error('config ran too long', 0) end, '', HOOK_STEPS)
@@ -60,7 +60,7 @@ function M.load(src, chunkname, vectors)
     return res, env
 end
 
---- Items: iterates the array part of a config value; the inert value yields nothing, since ipairs never ends on it.
+--- Items: loops over the list part of a config value; the empty value gives nothing.
 function M.items(t)
     local n = type(t) == 'table' and #t or 0
     local i = 0

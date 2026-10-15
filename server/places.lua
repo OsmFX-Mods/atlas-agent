@@ -1,8 +1,11 @@
--- Places import: sends places.suggest with locations read from other resources' configs through lib/sandbox.lua.
--- Sources: ox_inventory shops, qbx_garages, qbx_ambulancejob hospitals, qbx_police stations, Renewed-Banking tellers.
+-- Places import: sends places.suggest with locations read from other resources' configs (lib/sandbox.lua).
+-- Sources: ox_inventory shops, qbx_garages, qbx_ambulancejob hospitals, qbx_police stations, Renewed-Banking.
 
+local cfg = AtlasConfig
+local common = AtlasLib.common
 local sandbox = AtlasLib.sandbox
 local xyz = sandbox.xyz
+local radius = cfg.placeRadius
 
 local function loadFile(res, path)
     if GetResourceState(res) == 'missing' then return nil end
@@ -19,10 +22,10 @@ function Atlas.loadOxShops()
     return type(shops) == 'table' and shops or nil
 end
 
-local function add(out, name, kind, v, radius)
+local function add(out, name, kind, v)
     local x, y = xyz(v)
     if x and type(name) == 'string' and name ~= '' then
-        out[#out + 1] = { name:sub(1, 64), kind, math.floor(x * 10 + 0.5) / 10, math.floor(y * 10 + 0.5) / 10, radius }
+        out[#out + 1] = { name:sub(1, 64), kind, common.round1(x), common.round1(y), radius[kind] or radius.custom }
     end
 end
 
@@ -35,9 +38,9 @@ local function collect()
             if type(shop) == 'table' then
                 local name = type(shop.name) == 'string' and shop.name or tostring(id)
                 if type(shop.locations) == 'table' then
-                    for _, loc in sandbox.items(shop.locations) do add(out, name, 'shop', loc, 15.0) end
+                    for _, loc in sandbox.items(shop.locations) do add(out, name, 'shop', loc) end
                 elseif type(shop.targets) == 'table' then
-                    for _, t in sandbox.items(shop.targets) do add(out, name, 'shop', type(t) == 'table' and (t.loc or t.coords), 15.0) end
+                    for _, t in sandbox.items(shop.targets) do add(out, name, 'shop', type(t) == 'table' and (t.loc or t.coords)) end
                 end
             end
         end
@@ -49,7 +52,7 @@ local function collect()
             for id, g in pairs(garages) do
                 if type(g) == 'table' and type(g.accessPoints) == 'table' and g.accessPoints[1] then
                     local ap = g.accessPoints[1]
-                    add(out, type(g.label) == 'string' and g.label or tostring(id), 'garage', ap.coords or ap.spawn, 30.0)
+                    add(out, type(g.label) == 'string' and g.label or tostring(id), 'garage', ap.coords or ap.spawn)
                 end
             end
         end
@@ -58,14 +61,14 @@ local function collect()
     local amb = loadFile('qbx_ambulancejob', 'config/shared.lua')
     if type(amb) == 'table' and type(amb.locations) == 'table' and type(amb.locations.hospitals) == 'table' then
         for id, h in pairs(amb.locations.hospitals) do
-            if type(h) == 'table' then add(out, tostring(id), 'hospital', h.coords, 40.0) end
+            if type(h) == 'table' then add(out, tostring(id), 'hospital', h.coords) end
         end
     end
 
     local pol = loadFile('qbx_police', 'config/shared.lua')
     if type(pol) == 'table' and type(pol.locations) == 'table' and type(pol.locations.stations) == 'table' then
         for _, st in sandbox.items(pol.locations.stations) do
-            if type(st) == 'table' then add(out, st.label, 'police', st.coords, 40.0) end
+            if type(st) == 'table' then add(out, st.label, 'police', st.coords) end
         end
     end
 
@@ -73,7 +76,7 @@ local function collect()
     local bankCfg = env and rawget(env, 'Config')
     if type(bankCfg) == 'table' and type(bankCfg.peds) == 'table' then
         for _, ped in sandbox.items(bankCfg.peds) do
-            if type(ped) == 'table' then add(out, 'Bank', 'bank', ped.coords, 20.0) end
+            if type(ped) == 'table' then add(out, 'Bank', 'bank', ped.coords) end
         end
     end
 

@@ -10,7 +10,7 @@ local function boot(convars)
     AtlasConfig.censusPageRows = 2
 end
 
---- Fake database: serves keyset pages over `rows`, sorted by `key`, and records every query.
+--- Fake database: serves pages of `rows`, sorted by `key`, and records every query.
 local function fakeDb(rows, key, opts)
     opts = opts or {}
     local db = Atlas.db

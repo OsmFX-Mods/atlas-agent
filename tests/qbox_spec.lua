@@ -337,6 +337,16 @@ describe('qbox death and revive', function()
         fx.teardown()
     end)
 
+    it('ignores a lethal hit older than the configured window', function()
+        boot()
+        login(4); login(5)
+        AtlasConfig.killWindowMs = 2000
+        Atlas.lastLethal[4] = { src = 5, char = 'CHAR0005', weapon = 99, gt = GetGameTimer() - 3000 }
+        meta(4, 'isdead', false, true)
+        expect(events('combat.death')[1].data.cause).toBe('unknown')
+        fx.teardown()
+    end)
+
     it('names the killer when a lethal hit from another player came within ten seconds', function()
         boot()
         login(4); login(5)

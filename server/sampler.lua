@@ -1,5 +1,5 @@
--- Sampler: reads positions from OneSync server natives only, never from client reports.
--- Schedule: one sample per player per atlas:sample_ms in 50 ms slices; still players are suppressed (lib/motion.lua).
+-- Sampler: reads player positions on the server, never from client reports.
+-- Schedule: each player is read once per sample interval, spread over 50 ms slices.
 
 local cfg = AtlasConfig
 local common, motion = AtlasLib.common, AtlasLib.motion
@@ -9,17 +9,17 @@ local nanotime = Atlas.nanotime
 
 local SLICE_MS = 50
 local UNARMED = u32(GetHashKey('WEAPON_UNARMED'))
-local RING = 24      -- ring size: positions kept to validate shot reports, covering the 60 s report window
-local RING_GAP = 3000 -- ring gap: minimum ms between kept positions, so boost sampling does not shrink the window
+local RING = 24      -- Ring: recent positions kept to check shot reports
+local RING_GAP = 3000 -- Ring gap: minimum ms between kept positions
 
-local state = {}      -- state: motion state per src
-local lastAt = {}     -- lastAt: GetGameTimer of the last sample per src
-local boostUntil = {} -- boostUntil: GetGameTimer when the boost ends per src
+local state = {}      -- state: motion state per player
+local lastAt = {}     -- lastAt: game time of the last sample per player
+local boostUntil = {} -- boostUntil: game time when the boost ends per player
 local cursor = 1
 
 Atlas.sampler = { state = state, boostUntil = boostUntil }
 
---- Sample: reads one player and returns true when a position was read; `high` marks boost samples with precision "high".
+--- Sample: reads one player and returns true if a position was read; `high` marks boost samples.
 local function sampleOne(src, gt, high)
     local p = Atlas.players[src]
     if not p then return false end
@@ -27,12 +27,12 @@ local function sampleOne(src, gt, high)
     if not ped or ped == 0 then return false end
     local c = GetEntityCoords(ped)
     local x, y, z = c.x, c.y, c.z
-    if x == 0.0 and y == 0.0 then return false end -- unplaced ped: skipped while the player is still loading
+    if x == 0.0 and y == 0.0 then return false end -- Skipped while the player is still loading
 
     lastAt[src] = gt
     local nowMs = Atlas.now()
 
-    -- Bucket: a routing bucket change is emitted as its own event
+    -- Bucket: a change of routing bucket is sent as its own event
     local bucket = GetPlayerRoutingBucket(src)
     if bucket ~= p.bucket then
         local from = p.bucket
@@ -49,15 +49,15 @@ local function sampleOne(src, gt, high)
         seat = (GetPedInVehicleSeat(veh, -1) == ped) and 'driver' or 'passenger'
     end
 
-    -- Weapons: recorded to validate client shot reports
+    -- Weapons: remembered to check shot reports
     local w = GetSelectedPedWeapon(ped)
     if w and w ~= 0 then
         w = u32(w)
         if w ~= UNARMED then Atlas.noteWeapon(p, w, gt) end
     end
 
-    local pos = { floor(x * 10 + 0.5) / 10, floor(y * 10 + 0.5) / 10, floor(z * 10 + 0.5) / 10 }
-    p.pos = pos -- fresh table: buffered events keep the position they were emitted with
+    local pos = common.pos(x, y, z)
+    p.pos = pos -- A new table each time, so queued events keep their own position
     if gt - (p.recentAt or -RING_GAP) >= RING_GAP then
         local ri = p.recentN % RING + 1
         p.recentN, p.recentAt = ri, gt
@@ -68,7 +68,7 @@ local function sampleOne(src, gt, high)
     if not st then st = {}; state[src] = st end
     local h = GetEntityHeading(ped)
     local cur = { x = x, y = y, z = z, h = h, vkey = motion.vehicleKey(vmodel, seat), bucket = bucket }
-    local decision = motion.decide(st, cur, nowMs)
+    local decision = motion.decide(st, cur, nowMs, cfg)
 
     if decision == 'sample' then
         local v = GetEntityVelocity(ped)
@@ -98,7 +98,7 @@ CreateThread(function()
             local k = perSlice(count, cfg.sampleMs, SLICE_MS)
             local minGap = cfg.boostSampleMs - 100
 
-            -- Due: a player is read once per sample_ms, at most k reads per slice; boosted players belong to the boost pass
+            -- Due: each player is read once per sample interval; boosted players are read in the pass below
             local read, scanned = 0, 0
             while read < k and scanned < count do
                 if cursor > count then cursor = 1 end
@@ -129,8 +129,8 @@ CreateThread(function()
     end
 end)
 
--- Boost: after combat, players within 150 m are sampled every second for 60 s.
--- Throttle: combat handlers call this, limited to two scans per second per area.
+-- Boost: after a fight, nearby players are sampled more often (see config.lua).
+-- Throttle: at most two scans per second for the same area.
 local lastBoost = { gt = 0, x = 0.0, y = 0.0 }
 function Atlas.boost(x, y)
     if not cfg.combatBoost or not x then return end
@@ -152,7 +152,7 @@ Atlas.onDrop(function(p)
     state[p.src], lastAt[p.src], boostUntil[p.src] = nil, nil, nil
 end)
 
---- Recent positions: server-sampled {x, y} for a player, used by shot validation.
+--- Recent positions: the player's last sampled {x, y} points, used to check shot reports.
 function Atlas.recentPositions(p)
     local out = {}
     for i = 1, RING do

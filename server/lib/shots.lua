@@ -1,5 +1,5 @@
--- Shots: validates client shots-fired reports on a 25 m cell grid; pure.
--- Rules: within the caps, player alive, every cell near a server-sampled position, every weapon seen in hand or equipped.
+-- Shots: checks shot reports from clients, grouped into 25 m squares.
+-- Rules: within the limits, player alive, each square near a sampled position, each weapon seen on the player.
 
 AtlasLib = AtlasLib or {}
 local M = {}
@@ -9,7 +9,7 @@ M.MAX_DIST = 75
 M.MAX_WINDOW_S = 60
 M.MAX_WEAPONS = 8
 M.MAX_CELLS = 64
-M.MAX_SHOTS_PER_WEAPON = 600 -- shot cap: a minigun fires about 500 in a 15 s window
+M.MAX_SHOTS_PER_WEAPON = 600 -- Shot limit per weapon: a minigun fires about 500 in 15 s
 
 local floor, sqrt, type = math.floor, math.sqrt, type
 
@@ -28,7 +28,7 @@ function M.validate(payload, ctx)
     if type(reports) ~= 'table' or #reports < 1 or #reports > M.MAX_WEAPONS then return false, 'malformed' end
 
     local clean = {}
-    local reach = M.MAX_DIST + M.CELL * 0.7072 -- Reach: cell centre to farthest corner
+    local reach = M.MAX_DIST + M.CELL * 0.7072 -- Reach: from the square centre to its far corner
     local reach2 = reach * reach
     local positions = ctx.positions or {}
 
@@ -80,7 +80,7 @@ function M.validate(payload, ctx)
     return true, nil, { window_s = floor(win), reports = clean }
 end
 
---- Cell: grid cell for a world coordinate, shared with the client module.
+--- Cell: the square a world coordinate falls in, as used by the client script.
 function M.cell(x, y)
     return floor(x / M.CELL), floor(y / M.CELL)
 end

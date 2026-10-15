@@ -1,9 +1,9 @@
--- Adapters: registry that attaches each adapter once all its resources are started, in any start order.
--- Re-attach: a restarted resource loses our hooks, so attach() must be safe to call again.
+-- Adapters: attaches each adapter once all its resources have started, in any order.
+-- Re-attach: a restarted resource loses our hooks, so attaching must be safe to repeat.
 
-local defs = {}      -- defs: adapter definitions in registration order
-local active = {}    -- active: names marked true while attached
-local attempt = {}   -- attempt: generation per adapter, so a newer attach replaces a retry loop still running
+local defs = {}      -- defs: adapters in the order they were added
+local active = {}    -- active: names set to true while attached
+local attempt = {}   -- attempt: latest attach number per adapter; an older retry stops when a newer one starts
 
 --- @param def table { name, resources = { 'res', ... }, attach = fn(), detach = fn()? }
 function Atlas.registerAdapter(def)
@@ -24,8 +24,8 @@ local function uses(def, res)
     return false
 end
 
--- Retry: attach() can run before a resource finishes initialising (ox_inventory registers hooks while loading),
--- so it is retried for up to 30 s before warning.
+-- Retry: a resource may not be ready when it starts (ox_inventory sets up hooks while loading),
+-- so attaching is retried for up to 30 s before a warning.
 local function attach(def)
     local gen = (attempt[def.name] or 0) + 1
     attempt[def.name] = gen

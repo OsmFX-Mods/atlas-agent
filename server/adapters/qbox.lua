@@ -1,6 +1,6 @@
--- Qbox adapter: maps qbx_core events and callbacks to Atlas events (built against qbx_core 1.23.0).
--- Source: signals verified in qbx_core/server/player.lua and server/events.lua.
+-- Qbox adapter: turns qbx_core events into Atlas events (built against qbx_core 1.23.0).
 
+local cfg = AtlasConfig
 local NAME = 'qbox'
 local qbx = exports.qbx_core
 
@@ -8,7 +8,7 @@ local STATE_KEYS = { isdead = true, inlaststand = true, ishandcuffed = true, inj
 
 local function active() return Atlas.enabled and Atlas.adapterActive(NAME) end
 
-local accountChars = {} -- accountChars: character names per citizenid per src, used to verify deletions
+local accountChars = {} -- accountChars: each player's account characters and names, used to confirm deletions
 
 -- Identity: reads character, job and gang facts from PlayerData.
 local function charNameOf(pd)
@@ -18,7 +18,7 @@ local function charNameOf(pd)
     end
 end
 
---- Identity load: copies the PlayerData facts Atlas needs into the identity cache.
+--- Identity load: copies the character facts Atlas needs into the player cache.
 local function loadIdentity(src, pd)
     local p = Atlas.ensurePlayer(src)
     if not p then return nil end
@@ -27,7 +27,7 @@ local function loadIdentity(src, pd)
     p.job = job.name
     p.grade = type(job.grade) == 'table' and job.grade.level or nil
     p.duty = job.onduty == true
-    -- Paycheck: qbx sends paychecks with reason 'unknown', so money.change carries job_payment to identify them
+    -- Paycheck: qbx labels paychecks 'unknown', so money.change carries job_payment to identify them
     p.jobPayment = tonumber(job.payment)
     p.gang = (gang.name and gang.name ~= 'none') and gang.name or nil
     p.money = {}
@@ -78,7 +78,7 @@ local function charEnd(p, reason)
     Atlas.setChar(p.src, nil, nil)
 end
 
--- PlayerLoaded: server-side after login; emits session.char_start, plus character.create for new characters.
+-- PlayerLoaded: runs after login; sends session.char_start, plus character.create for new characters.
 AddEventHandler('QBCore:Server:PlayerLoaded', function(player)
     if not active() or type(player) ~= 'table' then return end
     local pd = player.PlayerData
@@ -201,7 +201,7 @@ AddEventHandler('qbx_core:server:onSetMetaData', function(key, old, value, src)
         p.down = true
         local data = { state = key == 'isdead' and 'dead' or 'laststand', cause = 'unknown' }
         local l = Atlas.lastLethal[src]
-        if l and GetGameTimer() - l.gt < 10000 and l.src ~= src then
+        if l and GetGameTimer() - l.gt < cfg.killWindowMs and l.src ~= src then
             data.cause = 'player'
             data.killer_char = l.char
             data.killer_src = l.src
@@ -211,8 +211,8 @@ AddEventHandler('qbx_core:server:onSetMetaData', function(key, old, value, src)
         p.respawned = false
         Atlas.emit('combat.death', data, src)
     elseif not p.dead then
-        -- Revive: qbx_medical revives only send a client event, so this state flip is all the server sees.
-        -- Respawn: a hospital respawn flips it too but announces itself first (p.respawned), so it is skipped.
+        -- Revive: qbx_medical only tells the client, so this state change is all the server sees.
+        -- A hospital respawn changes it too but announces itself first, so it is skipped.
         if p.down and (key == 'isdead' or key == 'inlaststand') then
             local respawned = p.respawned
             p.respawned = false
@@ -222,8 +222,8 @@ AddEventHandler('qbx_core:server:onSetMetaData', function(key, old, value, src)
     end
 end)
 
--- Character deletion: qbx_core exposes it only as an ox_lib callback and a deprecated net event.
--- Validation: only ids owned by the requesting account count, and the row must be gone before character.delete is sent.
+-- Character deletion: qbx_core only offers an ox_lib callback and an old net event for it.
+-- Check: the character must belong to the player's account and be gone from the database.
 local function fetchAccountChars(src)
     local p = Atlas.players[src]
     if not p or not Atlas.db.available() then return end
@@ -240,12 +240,12 @@ Atlas.onJoin(function(p)
     if Atlas.adapterActive(NAME) then CreateThread(function() fetchAccountChars(p.src) end) end
 end)
 
-local checking = {} -- checking: citizen ids with a deletion check in flight, so repeated requests cost one query
+local checking = {} -- checking: characters being checked, so repeated requests cost one query
 
 local function onDeleteRequest(src, citizenId)
     if not active() or type(citizenId) ~= 'string' or checking[citizenId] then return end
     local owned = accountChars[src]
-    if not owned or owned[citizenId] == nil then return end -- owned: kept by reference, so a drop during the wait still records it
+    if not owned or owned[citizenId] == nil then return end -- Kept by reference, so a drop during the wait still counts
     local name = owned[citizenId]
     local player = Atlas.players[src] -- player: compared after the wait, since the id can be reused by someone else
     checking[citizenId] = true

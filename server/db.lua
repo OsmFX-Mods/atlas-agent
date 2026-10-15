@@ -1,5 +1,5 @@
--- Database: calls exports.oxmysql directly and awaits a promise, so oxmysql is not a hard dependency.
--- Yielding: call these only from threads (CreateThread), never from inside ox_inventory or qbx hooks.
+-- Database: calls oxmysql directly and waits for the result, so oxmysql is not required.
+-- Waiting: use only inside threads (CreateThread), never inside ox_inventory or qbx hooks.
 
 Atlas.db = {}
 
@@ -27,7 +27,7 @@ local function call(method, sql, params)
         end, resource, true)
     end)
     if not ok then return nil, tostring(err) end
-    -- Timeout: a query that never calls back would hold the calling thread forever
+    -- Timeout: a query that never answers would block the thread forever
     SetTimeout(TIMEOUT_MS, function() settle(p.reject, 'oxmysql timed out') end)
     local ok2, res = pcall(Citizen.Await, p)
     if not ok2 then return nil, tostring(res) end
@@ -38,7 +38,7 @@ function Atlas.db.query(sql, params) return call('query', sql, params) end
 function Atlas.db.scalar(sql, params) return call('scalar', sql, params) end
 function Atlas.db.single(sql, params) return call('single', sql, params) end
 
---- Database clock: unix seconds with fractions; snapshot deltas use it so agent clock skew cannot skip rows.
+--- Database clock: seconds since 1970 with fractions; snapshots use it so a wrong clock cannot skip rows.
 function Atlas.db.now()
     local v, err = call('scalar', 'SELECT UNIX_TIMESTAMP(NOW(3))')
     return tonumber(v), err

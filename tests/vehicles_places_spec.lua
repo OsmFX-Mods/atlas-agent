@@ -177,6 +177,16 @@ describe('places import', function()
         fx.teardown()
     end)
 
+    it('uses the place sizes from the config', function()
+        boot({ ['ox_inventory/data/shops.lua'] = [[return { General = { name = 'Corner Shop', locations = { vec3(1.0, 2.0, 3.0) } } } ]] },
+            nil, { ox_inventory = 'started' })
+        AtlasConfig.placeRadius.shop = 22.0
+        fx.tick()
+        fx.advance(11000)
+        expect(events('places.suggest')[1].data.entries[1][5]).toBe(22.0)
+        fx.teardown()
+    end)
+
     it('imports garages and hospitals and rounds coordinates', function()
         boot({ ['qbx_ambulancejob/config/shared.lua'] = [[return { locations = { hospitals = {
             pillbox = { coords = vec3(298.66, -584.46, 43.26) } } } } ]] },
