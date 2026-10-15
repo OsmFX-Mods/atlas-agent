@@ -118,6 +118,19 @@ describe('ox_inventory hooks', function()
         fx.teardown()
     end)
 
+    it('skips the money items a framework mirrors as accounts', function()
+        boot({ ['atlas:ox_createitem'] = 1 })
+        online(1, 'CHAR0001')
+        Atlas.framework = { name = 'esx', inventoryAccounts = { 'money', 'black_money' } }
+        hooks.createItem.fn({ item = { name = 'black_money' }, inventoryId = 1, count = 500 })
+        hooks.createItem.fn({ item = { name = 'water' }, inventoryId = 1, count = 1 })
+        expect(#events('item.create')).toBe(1)
+        Atlas.framework = nil
+        hooks.createItem.fn({ item = { name = 'black_money' }, inventoryId = 1, count = 500 })
+        expect(#events('item.create')).toBe(2)
+        fx.teardown()
+    end)
+
     it('records shop and stash visits as place.visit', function()
         boot()
         online(1)

@@ -1,26 +1,11 @@
 -- Places import: sends places.suggest with locations read from other resources' configs (lib/sandbox.lua).
--- Sources: ox_inventory shops, qbx_garages, qbx_ambulancejob hospitals, qbx_police stations, Renewed-Banking.
+-- Sources: registered by the adapters (shops, garages, hospitals, police stations, bank tellers).
 
 local cfg = AtlasConfig
 local common = AtlasLib.common
 local sandbox = AtlasLib.sandbox
 local xyz = sandbox.xyz
 local radius = cfg.placeRadius
-
-local function loadFile(res, path)
-    if GetResourceState(res) == 'missing' then return nil end
-    local src = LoadResourceFile(res, path)
-    if not src then return nil end
-    local result, env, err = sandbox.load(src, res .. '/' .. path, Atlas.vectorCtors())
-    if err then Atlas.debug('places: could not read %s/%s: %s', res, path, tostring(err)) end
-    return result, env
-end
-
---- Shop definitions: ox_inventory shops, also read by prices.catalog.
-function Atlas.loadOxShops()
-    local shops = loadFile('ox_inventory', 'data/shops.lua')
-    return type(shops) == 'table' and shops or nil
-end
 
 local function add(out, name, kind, v)
     local x, y = xyz(v)
@@ -29,57 +14,14 @@ local function add(out, name, kind, v)
     end
 end
 
+-- Collect: each active source reads its own configs; one failing source does not stop the others.
 local function collect()
     local out = {}
-
-    local shops = Atlas.loadOxShops()
-    if shops then
-        for id, shop in pairs(shops) do
-            if type(shop) == 'table' then
-                local name = type(shop.name) == 'string' and shop.name or tostring(id)
-                if type(shop.locations) == 'table' then
-                    for _, loc in sandbox.items(shop.locations) do add(out, name, 'shop', loc) end
-                elseif type(shop.targets) == 'table' then
-                    for _, t in sandbox.items(shop.targets) do add(out, name, 'shop', type(t) == 'table' and (t.loc or t.coords)) end
-                end
-            end
-        end
+    local function put(name, kind, v) add(out, name, kind, v) end
+    for _, def in ipairs(Atlas.sources('places')) do
+        local ok, err = pcall(def.read, put)
+        if not ok then Atlas.warn('places from %s failed: %s', def.name, tostring(err)) end
     end
-
-    if GetResourceState('qbx_garages') == 'started' then
-        local ok, garages = pcall(function() return exports.qbx_garages:GetGarages() end)
-        if ok and type(garages) == 'table' then
-            for id, g in pairs(garages) do
-                if type(g) == 'table' and type(g.accessPoints) == 'table' and g.accessPoints[1] then
-                    local ap = g.accessPoints[1]
-                    add(out, type(g.label) == 'string' and g.label or tostring(id), 'garage', ap.coords or ap.spawn)
-                end
-            end
-        end
-    end
-
-    local amb = loadFile('qbx_ambulancejob', 'config/shared.lua')
-    if type(amb) == 'table' and type(amb.locations) == 'table' and type(amb.locations.hospitals) == 'table' then
-        for id, h in pairs(amb.locations.hospitals) do
-            if type(h) == 'table' then add(out, tostring(id), 'hospital', h.coords) end
-        end
-    end
-
-    local pol = loadFile('qbx_police', 'config/shared.lua')
-    if type(pol) == 'table' and type(pol.locations) == 'table' and type(pol.locations.stations) == 'table' then
-        for _, st in sandbox.items(pol.locations.stations) do
-            if type(st) == 'table' then add(out, st.label, 'police', st.coords) end
-        end
-    end
-
-    local _, env = loadFile('Renewed-Banking', 'config.lua')
-    local bankCfg = env and rawget(env, 'Config')
-    if type(bankCfg) == 'table' and type(bankCfg.peds) == 'table' then
-        for _, ped in sandbox.items(bankCfg.peds) do
-            if type(ped) == 'table' then add(out, 'Bank', 'bank', ped.coords) end
-        end
-    end
-
     return out
 end
 
@@ -97,8 +39,6 @@ local function importAll()
     Atlas.debug('places: %d suggestions', #entries)
 end
 
-local SOURCES = { ox_inventory = true, qbx_garages = true, qbx_ambulancejob = true, qbx_police = true, ['Renewed-Banking'] = true }
-
 -- Debounce: source resources usually start together, so one import covers them.
 local pending = false
 local function scheduleImport()
@@ -112,7 +52,7 @@ local function scheduleImport()
 end
 
 AddEventHandler('onResourceStart', function(res)
-    if SOURCES[res] then scheduleImport() end
+    if Atlas.sourceResources('places')[res] then scheduleImport() end
 end)
 
 scheduleImport()

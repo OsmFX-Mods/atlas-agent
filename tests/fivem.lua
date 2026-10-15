@@ -38,6 +38,113 @@ local function set(name, value)
     _G[name] = value
 end
 
+
+--- JSON: a small decoder and encoder standing in for FiveM's json global; objects decode to plain tables, empty tables encode as [].
+local function jsonStub()
+    local function skip(s, i) return s:find('%S', i) or #s + 1 end
+    local decodeValue
+
+    local function decodeString(s, i)
+        local out, j = {}, i + 1
+        while true do
+            local c = s:sub(j, j)
+            if c == '' then error('unterminated string') end
+            if c == '"' then return table.concat(out), j + 1 end
+            if c == '\\' then
+                local e = s:sub(j + 1, j + 1)
+                local map = { n = '\n', t = '\t', r = '\r', b = '\b', f = '\f', ['/'] = '/', ['\\'] = '\\', ['"'] = '"' }
+                if e == 'u' then
+                    out[#out + 1] = utf8.char(tonumber(s:sub(j + 2, j + 5), 16))
+                    j = j + 6
+                else
+                    out[#out + 1] = map[e] or error('bad escape')
+                    j = j + 2
+                end
+            else
+                out[#out + 1] = c
+                j = j + 1
+            end
+        end
+    end
+
+    function decodeValue(s, i)
+        i = skip(s, i)
+        local c = s:sub(i, i)
+        if c == '{' then
+            local t = {}
+            i = skip(s, i + 1)
+            if s:sub(i, i) == '}' then return t, i + 1 end
+            while true do
+                i = skip(s, i)
+                local k
+                k, i = decodeString(s, i)
+                i = skip(s, i)
+                if s:sub(i, i) ~= ':' then error('expected :') end
+                t[k], i = decodeValue(s, i + 1)
+                i = skip(s, i)
+                local d = s:sub(i, i)
+                if d == '}' then return t, i + 1 end
+                if d ~= ',' then error('expected ,') end
+                i = i + 1
+            end
+        elseif c == '[' then
+            local t = {}
+            i = skip(s, i + 1)
+            if s:sub(i, i) == ']' then return t, i + 1 end
+            while true do
+                t[#t + 1], i = decodeValue(s, i)
+                i = skip(s, i)
+                local d = s:sub(i, i)
+                if d == ']' then return t, i + 1 end
+                if d ~= ',' then error('expected ,') end
+                i = i + 1
+            end
+        elseif c == '"' then
+            return decodeString(s, i)
+        elseif s:sub(i, i + 3) == 'true' then return true, i + 4
+        elseif s:sub(i, i + 4) == 'false' then return false, i + 5
+        elseif s:sub(i, i + 3) == 'null' then return nil, i + 4
+        end
+        local num = s:match('^-?%d+%.?%d*[eE]?[+-]?%d*', i)
+        if not num or num == '' then error('unexpected character at ' .. i) end
+        return tonumber(num), i + #num
+    end
+
+    local function decode(s)
+        if type(s) ~= 'string' then error('not a string') end
+        local v, i = decodeValue(s, 1)
+        if skip(s, i) <= #s then error('trailing characters') end
+        return v
+    end
+
+    local function encode(v)
+        local t = type(v)
+        if t == 'string' then
+            return '"' .. v:gsub('[%c"\\]', function(c)
+                return ({ ['"'] = '\\"', ['\\'] = '\\\\', ['\n'] = '\\n' })[c] or ('\\u%04x'):format(c:byte())
+            end) .. '"'
+        elseif t == 'number' then
+            return math.type(v) == 'integer' and tostring(v) or ('%.14g'):format(v)
+        elseif t == 'boolean' then return tostring(v)
+        elseif t == 'table' then
+            local n = #v
+            local out = {}
+            if n > 0 or next(v) == nil then
+                for i = 1, n do out[i] = encode(v[i]) end
+                return '[' .. table.concat(out, ',') .. ']'
+            end
+            local keys = {}
+            for k in pairs(v) do keys[#keys + 1] = tostring(k) end
+            table.sort(keys)
+            for _, k in ipairs(keys) do out[#out + 1] = encode(k) .. ':' .. encode(v[k]) end
+            return '{' .. table.concat(out, ',') .. '}'
+        end
+        return 'null'
+    end
+
+    set('json', { decode = decode, encode = encode })
+end
+
 local function entity(p) return p and p.ped end
 
 local function natives()
@@ -153,7 +260,7 @@ function fx.boot(opts)
     end)
     set('source', nil)
 
-    natives(); events(); threads()
+    natives(); events(); threads(); jsonStub()
     for _, name in ipairs({ 'Atlas', 'AtlasLib', 'AtlasConfig' }) do set(name, nil) end
     for _, rel in ipairs(MODULES) do load_module(rel) end
     for _, rel in ipairs(opts.load or {}) do load_module(rel) end

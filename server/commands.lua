@@ -65,15 +65,27 @@ RegisterCommand('atlas_selftest', function(source, args)
             out('%s oxmysql not started (snapshots disabled)', mark(false))
         end
 
-        -- Adapters: reports each supported resource as attached or skipped
-        for _, res in ipairs({ 'qbx_core', 'ox_inventory', 'qbx_vehicles', 'qbx_medical', 'qbx_ambulancejob', 'Renewed-Banking' }) do
-            local state = GetResourceState(res)
-            local name = res == 'qbx_core' and 'qbox' or res == 'Renewed-Banking' and 'renewed_banking' or res
-            if state == 'started' then
-                out('%s adapter %s attached', mark(Atlas.adapterActive(name)), name)
-            else
-                out('     adapter %s skipped (%s is %s)', name, res, state)
+        -- Adapters: reports each adapter as attached or skipped, and why
+        for _, def in ipairs(Atlas.adapterList and Atlas.adapterList() or {}) do
+            local waiting, state
+            for _, res in ipairs(def.resources) do
+                state = GetResourceState(res)
+                if state ~= 'started' then waiting = res break end
             end
+            if #def.resources == 0 then
+                -- Always on: nothing to wait for
+            elseif def.enabled and not def.enabled() then
+                out('     adapter %s skipped (atlas:%s is %s)', def.name, def.group, AtlasConfig[def.group])
+            elseif waiting then
+                out('     adapter %s skipped (%s is %s)', def.name, waiting, state)
+            elseif def.group and Atlas.adapterOwner(def.group) ~= def.name and not Atlas.adapterActive(def.name) then
+                out('     adapter %s skipped (%s is the active %s)', def.name, tostring(Atlas.adapterOwner(def.group)), def.group)
+            else
+                out('%s adapter %s attached', mark(Atlas.adapterActive(def.name)), def.name)
+            end
+        end
+        if not Atlas.framework then
+            out('     no framework attached (account ids stand in for characters, money and item data are skipped)')
         end
 
         -- Sampler: counts samples taken while waiting one interval
@@ -83,13 +95,14 @@ RegisterCommand('atlas_selftest', function(source, args)
         out('%s sampler running (%d samples in the last few seconds, %d players)',
             mark(#Atlas.playerList == 0 or sampled > 0), sampled, #Atlas.playerList)
 
-        -- Money path: a 0-amount AddMoney should reach the Qbox money hook
+        -- Money path: a no-change money call should reach the framework's money hook
         local src = tonumber(args[1])
-        if src and Atlas.adapterActive('qbox') then
+        local fw = Atlas.framework
+        if src and fw and fw.selftestMoney then
             Atlas.selftestMoneySeen = false
-            local ok = pcall(function() return exports.qbx_core:AddMoney(src, 'cash', 0, 'atlas_selftest') end)
+            local ok = fw.selftestMoney(src)
             Wait(200)
-            out('%s qbx money hook fires (player %s)', mark(ok and Atlas.selftestMoneySeen), src)
+            out('%s %s money hook fires (player %s)', mark(ok and Atlas.selftestMoneySeen), fw.name, src)
         end
 
         -- End to end: sends a marker event and waits up to 15 s for Atlas to confirm it

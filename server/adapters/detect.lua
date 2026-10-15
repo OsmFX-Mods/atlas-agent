@@ -4,8 +4,11 @@
 local defs = {}      -- defs: adapters in the order they were added
 local active = {}    -- active: names set to true while attached
 local attempt = {}   -- attempt: latest attach number per adapter; an older retry stops when a newer one starts
+local owner = {}     -- owner: the adapter holding each exclusive group, such as the framework
 
---- @param def table { name, resources = { 'res', ... }, attach = fn(), detach = fn()? }
+--- @param def table { name, resources = { 'res', ... }, attach = fn(), detach = fn()?, group = string?, enabled = fn()? }
+--- Group: adapters of one group are exclusive, and the first to attach keeps it until it detaches.
+--- Enabled: when it returns false the adapter is skipped.
 function Atlas.registerAdapter(def)
     defs[#defs + 1] = def
 end
@@ -15,6 +18,10 @@ local function allStarted(def)
         if GetResourceState(def.resources[i]) ~= 'started' then return false end
     end
     return true
+end
+
+local function enabled(def)
+    return def.enabled == nil or def.enabled()
 end
 
 local function uses(def, res)
@@ -32,9 +39,15 @@ local function attach(def)
     CreateThread(function()
         for tries = 1, 30 do
             if attempt[def.name] ~= gen or not allStarted(def) then return end
+            if def.group and owner[def.group] and owner[def.group] ~= def.name then
+                Atlas.warn('%s is the active %s, so %s is not used. Set atlas:%s to choose another.',
+                    owner[def.group], def.group, def.name, def.group)
+                return
+            end
             local ok, err = pcall(def.attach)
             if ok then
                 active[def.name] = true
+                if def.group then owner[def.group] = def.name end
                 Atlas.adapters[def.name] = true
                 Atlas.log('adapter ^2%s^7 attached', def.name)
                 return
@@ -52,9 +65,20 @@ end
 local function detach(def)
     if not active[def.name] then return end
     active[def.name] = nil
+    if def.group and owner[def.group] == def.name then owner[def.group] = nil end
     Atlas.adapters[def.name] = nil
     if def.detach then pcall(def.detach) end
     Atlas.log('adapter ^3%s^7 detached', def.name)
+end
+
+--- List: every registered adapter, for the selftest report.
+function Atlas.adapterList()
+    return defs
+end
+
+--- Owner: the adapter currently holding an exclusive group, or nil.
+function Atlas.adapterOwner(group)
+    return owner[group]
 end
 
 --- Active: whether the adapter is currently attached.
@@ -69,7 +93,7 @@ AddEventHandler('onResourceStart', function(res)
         if uses(def, res) then
             -- Restart: the dependency lost our hooks, so the adapter attaches again
             if active[def.name] then detach(def) end
-            if allStarted(def) then attach(def) end
+            if allStarted(def) and enabled(def) then attach(def) end
         end
     end
 end)
@@ -85,6 +109,6 @@ end)
 -- Initial detection: runs on the first tick, after every adapter file has loaded.
 CreateThread(function()
     for i = 1, #defs do
-        if allStarted(defs[i]) then attach(defs[i]) end
+        if allStarted(defs[i]) and enabled(defs[i]) then attach(defs[i]) end
     end
 end)

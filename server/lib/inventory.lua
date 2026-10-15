@@ -35,6 +35,25 @@ local function ref(kind, id, charOf)
 end
 M.ref = ref
 
+--- Census inventory: a stored inventory in the form the daemon reads, which is a list of items or a table of slots.
+--- ESX's own inventory is a { name = count } table, so it becomes a list; any other form goes as stored.
+--- @param raw string? stored inventory text
+--- @param json table { decode, encode }
+--- @return string
+function M.census(raw, json)
+    if type(raw) ~= 'string' or raw == '' then return '[]' end
+    if not raw:find('^%s*{') then return raw end
+    local ok, map = pcall(json.decode, raw)
+    if not ok or type(map) ~= 'table' then return '[]' end
+    local list = {}
+    for name, count in pairs(map) do
+        if type(count) ~= 'number' then return raw end
+        if count > 0 then list[#list + 1] = { name = tostring(name), count = count } end
+    end
+    table.sort(list, function(a, b) return a.name < b.name end)
+    return json.encode(list)
+end
+
 --- Swap items: turns a swapItems payload (move, stack, swap, give) into 0, 1 or 2 item.move tables.
 --- Moves inside one inventory are ignored.
 --- @param p table hook payload

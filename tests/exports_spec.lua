@@ -161,3 +161,118 @@ describe('exports.place', function()
         fx.teardown()
     end)
 end)
+
+describe('character exports', function()
+    local api
+
+    local function bootCharacters()
+        fx.boot({
+            convars = { ['atlas:token'] = 'atl_live_x' },
+            load = { 'server/adapters/detect.lua', 'server/sources.lua', 'server/framework.lua', 'server/characters.lua',
+                'server/money.lua', 'server/exports.lua' },
+        })
+        api = fx.state.exported
+        fx.addPlayer(4, { ped = { x = 1.0, y = 1.0, z = 1.0 } })
+        Atlas.ensurePlayer(4)
+    end
+
+    local function events(etype)
+        Atlas.jsReady = true
+        Atlas.flush()
+        local out = {}
+        for _, call in ipairs(fx.triggered('atlas:internal:batch')) do
+            for _, ev in ipairs(call[1]) do
+                if ev.type == etype then out[#out + 1] = ev end
+            end
+        end
+        return out
+    end
+
+    it('starts a character from the data a script gives', function()
+        bootCharacters()
+        expect(api.character(4, { id = 'abc', name = 'Ann Lee', job = 'police', grade = 2, duty = true, gang = 'ballas',
+            cash = 10, bank = 20, new = true })).toBe(true)
+        local p = Atlas.players[4]
+        expect(p.char).toBe('abc')
+        expect(p.actor.job).toBe('police')
+        expect(p.money).toEqual({ cash = 10, bank = 20 })
+        expect(events('character.create')[1].data.char).toBe('abc')
+        expect(events('session.char_start')[1].data.char_name).toBe('Ann Lee')
+        fx.teardown()
+    end)
+
+    it('accepts a numeric id and ignores a repeat of the same character', function()
+        bootCharacters()
+        expect(api.character(4, { id = 77 })).toBe(true)
+        expect(Atlas.players[4].char).toBe('77')
+        expect(api.character(4, { id = 77 })).toBe(true)
+        expect(#events('session.char_start')).toBe(1)
+        fx.teardown()
+    end)
+
+    it('ends the previous character on a switch', function()
+        bootCharacters()
+        api.character(4, { id = 'a' })
+        api.character(4, { id = 'b' })
+        expect(events('session.char_end')[1].data.reason).toBe('switch')
+        expect(Atlas.charOf(4)).toBe('b')
+        fx.teardown()
+    end)
+
+    it('rejects bad input', function()
+        bootCharacters()
+        expect(api.character(4, nil)).toBe(false)
+        expect(api.character(4, {})).toBe(false)
+        expect(api.character(4, { id = '' })).toBe(false)
+        expect(api.character(4, { id = ('x'):rep(65) })).toBe(false)
+        expect(api.character(99, { id = 'a' })).toBe(false)
+        expect(api.character(4, { id = 'a', cash = 'x', bank = 1e30, job = 5 })).toBe(true)
+        expect(Atlas.players[4].money).toEqual({})
+        expect(Atlas.players[4].job).toBeNil()
+        fx.teardown()
+    end)
+
+    it('reports a logout, job, duty and gang change', function()
+        bootCharacters()
+        api.character(4, { id = 'a', job = 'police', grade = 1, duty = true })
+        expect(api.job(4, 'ems', 2)).toBe(true)
+        expect(Atlas.players[4].duty).toBe(true)
+        expect(api.duty(4, false)).toBe(true)
+        expect(api.gang(4, 'ballas')).toBe(true)
+        expect(events('job.change')[1].data.to).toEqual({ job = 'ems', grade = 2 })
+        expect(events('duty.change')[1].data.on).toBe(false)
+        expect(events('gang.change')[1].data.to).toBe('ballas')
+        expect(api.gang(4, nil)).toBe(true)
+        expect(events('gang.change')[2].data.to).toBeNil()
+        expect(api.logout(4)).toBe(true)
+        expect(events('session.char_end')[1].data.reason).toBe('logout')
+        expect(api.logout(4)).toBe(false)
+        fx.teardown()
+    end)
+
+    it('rejects a job without a name and a player that is not online', function()
+        bootCharacters()
+        expect(api.job(4, nil)).toBe(false)
+        expect(api.job(99, 'x')).toBe(false)
+        expect(api.duty(99, true)).toBe(false)
+        expect(api.gang(99, 'x')).toBe(false)
+        fx.teardown()
+    end)
+
+    it('refuses while a framework adapter is attached', function()
+        bootCharacters()
+        Atlas.framework = { name = 'esx' }
+        expect(api.character(4, { id = 'a' })).toBe(false)
+        expect(api.job(4, 'x')).toBe(false)
+        expect(api.logout(4)).toBe(false)
+        expect(Atlas.players[4].char).toBeNil()
+        fx.teardown()
+    end)
+
+    it('uses the character id for positions in place of the account id', function()
+        bootCharacters()
+        api.character(4, { id = 'abc' })
+        expect(Atlas.players[4].actor.char).toBe('abc')
+        fx.teardown()
+    end)
+end)

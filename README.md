@@ -16,7 +16,7 @@
 
 This repository is the **Atlas agent**, the small resource you install on your game server. It watches what happens in your city and sends it to your Atlas dashboard. The heavy lifting runs on the Atlas side, so the agent stays light.
 
-> **Early access.** Atlas is free and open by invitation, for Qbox servers with 5 to 25 players. The agent needs a token from an Atlas dashboard to do anything, so [request access on the Atlas page](https://osmfxmods.com/atlas) first.
+> **Early access.** Atlas is free and open by invitation, for Qbox and ESX servers with 5 to 25 players. The agent needs a token from an Atlas dashboard to do anything, so [request access on the Atlas page](https://osmfxmods.com/atlas) first.
 
 ---
 
@@ -60,7 +60,7 @@ The agent only reads facts that already exist on your server.
 | **Combat** | Damage, deaths and explosions. Shots fired are reported by the client in aggregate and checked by the server. |
 | **Money** | Every cash and bank change with its reason, plus a snapshot of balances every 15 minutes. |
 | **Items** | Moves, uses, purchases and crafting from `ox_inventory`, plus a daily census of items. |
-| **Vehicles and medical** | Ownership and transfers from `qbx_vehicles`, check-ins and revives from `qbx_medical`. |
+| **Vehicles and medical** | Ownership and transfers from `qbx_vehicles`, vehicle ownership from the database, check-ins and revives from `qbx_medical`, and deaths and revives from `esx_death`. |
 | **Sessions** | Joins, leaves, character changes, job and gang changes, resource restarts. |
 | **Chat** | Message length and command name only. Message text is off unless you turn it on. |
 | **Logs** | Log lines from `ox_lib`'s logger when it is pointed at Atlas (see [Logs](#logs)), plus script errors and warnings from the server console. |
@@ -77,11 +77,11 @@ The agent only reads facts that already exist on your server.
 
 - A FiveM server with **OneSync** enabled
 - An Atlas dashboard, and a server token from it ([request access](https://osmfxmods.com/atlas))
-- [Qbox](https://github.com/Qbox-project) (`qbx_core`) and [`ox_inventory`](https://github.com/overextended/ox_inventory) for the full picture. Without them the agent still sends sessions, positions and combat.
+- A framework: [Qbox](https://github.com/Qbox-project) (`qbx_core`) or [ESX Legacy](https://github.com/esx-framework/esx_core) (`es_extended`). Optionally [`ox_inventory`](https://github.com/overextended/ox_inventory) for items; ESX also works with its built-in inventory. Without a framework the agent still sends sessions, positions and combat, and uses the player account as the character.
 - [`oxmysql`](https://github.com/overextended/oxmysql) for the money, item and vehicle snapshots. Optional.
 - [`qbx_vehicles`](https://github.com/Qbox-project/qbx_vehicles), [`qbx_medical`](https://github.com/Qbox-project/qbx_medical) and [`Renewed-Banking`](https://github.com/Renewed-Scripts/Renewed-Banking) add vehicles, medical and bank accounts when present.
 
-Resources can start in any order. The agent attaches to each one as it starts.
+Resources can start in any order. The agent attaches to each one as it starts. If both Qbox and ESX are installed, the first to start is used; see [Frameworks](docs/frameworks.md) to choose.
 
 ### Steps
 
@@ -110,7 +110,7 @@ atlas_selftest      # checks the token, the connection to Atlas, adapters, datab
 atlas_bench         # shows what the agent costs on your server
 ```
 
-Both are restricted to the console, or to ACE `command.atlas_selftest` and `command.atlas_bench`.
+Both are restricted to the console, or to ACE `command.atlas_selftest` and `command.atlas_bench`. The selftest lists which framework and adapters are attached, and why any were skipped.
 
 ---
 
@@ -154,6 +154,7 @@ Everything has a sensible default. The common settings are convars: add them to 
 | `atlas:combat_boost` | `1` | Sample more often near a fight. |
 | `atlas:client_combat` | `1` | Count shots fired on the client and report them in aggregate. |
 | `atlas:chat_content` | `0` | Send chat text. Off means length and command name only. |
+| `atlas:framework` | `auto` | Which framework to read: `auto`, `qbox`, `esx` or `none`. See [Frameworks](docs/frameworks.md). |
 | `atlas:snapshots` | `1` | Money, account and item snapshots from the database (needs `oxmysql`). |
 | `atlas:census_hour` | `5` | Hour of day (server time) for the daily item and vehicle census. |
 | `atlas:place_visits` | `1` | Record shop and stash visits as places. |
@@ -181,8 +182,13 @@ If Atlas cannot be reached, events are kept on disk and sent in order once the c
 | `moneyEveryMin` | `15` | Minutes between money snapshots. |
 | `accountsEveryMin` | `15` | Minutes between bank account snapshots. |
 | `moneyFullEveryDays` | `7` | Days between full money snapshots. Other runs send changes only. |
+| `moneyFullEveryMin` | `60` | Minutes between full money snapshots on a framework that cannot list changed rows. |
 | `censusFullMaxDays` | `8` | A full item census also runs when the last one is older than this. |
 | `placeRadius` | per kind | Size in metres of each kind of place: `shop`, `garage`, `hospital`, `police`, `bank` and `custom`. |
+| `qbox.tables` | `players`, `player_vehicles`, `properties` | Qbox table names, for servers that renamed them. |
+| `esx.tables` | `users`, `owned_vehicles`, `vehicles`, `items`, `addon_account_data` | ESX table names, for servers that renamed them. |
+| `esx.accounts` | `money` and `black_money` as cash, `bank` as bank | Which ESX accounts count as cash, bank or crypto. Accounts left out are not tracked. |
+| `esx.changedColumn` | `last_seen` | `users` column that updates when a row changes, used to read only changed rows. |
 | `consoleWords` | `error`, `failed`, `warning`, `hitch` | Words that make a console line worth sending, in any letter case. |
 | `consoleMaxLines` | `100` | Most console lines sent per second. |
 | `consoleMaxChars` | `1000` | Console lines are cut to this length. |
@@ -191,6 +197,12 @@ If Atlas cannot be reached, events are kept on disk and sent in order once the c
 | `heartbeatMs` | `10000` | How often the agent reports that it is alive. |
 
 These are plain values, so changes are lost when you replace the files. Keep your edits when updating.
+
+---
+
+## Other frameworks
+
+A server with its own framework can report characters, jobs and gangs through exports, and a new framework adapter is two small files. [`docs/frameworks.md`](docs/frameworks.md) has the details.
 
 ---
 
