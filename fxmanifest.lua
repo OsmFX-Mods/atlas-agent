@@ -12,12 +12,12 @@ repository 'https://github.com/OsmFX-Mods/atlas-agent'
 -- Alias: provide 'atlas' keeps exports.atlas:track(...) working for scripts written against the old name.
 provide 'atlas'
 
--- Node: transport.js runs on FXServer's default Node 16 and needs only http, https, zlib and fs.
--- Version: node_version '22' is not set, because of open FXServer crash reports with Node 22 under load.
+-- Node: transport.js needs only http, https, zlib and fs, so it runs on FXServer's default Node 16.
+-- node_version '22' is left unset because FXServer has open crash reports with it under load.
 
 server_scripts {
     'config.lua',
-    -- Libraries: pure helpers, unit-tested in tests/
+    -- Libraries: helpers with no FiveM dependency, tested in tests/
     'server/lib/common.lua',
     'server/lib/clock.lua',
     'server/lib/motion.lua',
@@ -51,5 +51,5 @@ client_scripts {
 }
 
 dependencies {
-    '/onesync', -- OneSync: the sampler reads player peds with server-side natives
+    '/onesync', -- OneSync: the sampler reads player positions on the server
 }

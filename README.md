@@ -115,7 +115,7 @@ Both are restricted to the console, or to ACE `command.atlas_selftest` and `comm
 
 ## Configuration
 
-Everything has a sensible default. To change something, set a convar in `server.cfg` (with `set`), or read through [`config.lua`](config.lua).
+Everything has a sensible default. The common settings are convars: add them to `server.cfg` with `set`. Everything else is in [`config.lua`](config.lua).
 
 | Convar | Default | What it does |
 | :--- | :--- | :--- |
@@ -135,11 +135,34 @@ Everything has a sensible default. To change something, set a convar in `server.
 
 If Atlas cannot be reached, events are kept on disk and sent in order once the connection is back.
 
+### More settings in `config.lua`
+
+| Setting | Default | What it does |
+| :--- | :--- | :--- |
+| `boostRadius` | `150.0` | Metres around a fight where players are sampled more often. |
+| `boostMs` | `60000` | How long the faster sampling lasts. |
+| `boostSampleMs` | `1000` | Time between samples during a fight. |
+| `moveMeters` | `1.0` | Distance a player must move to count as moved. |
+| `turnDegrees` | `20` | Turn a player must make to count as moved. |
+| `stillEveryMs` | `30000` | How often a player who stands still is reported. |
+| `damageRatePerSec` | `100` | Most damage events accepted from one player per second. |
+| `explosionRatePerSec` | `20` | Most explosion events accepted from one player per second. |
+| `killWindowMs` | `10000` | How long after a hit it still counts as the cause of a death. |
+| `moneyEveryMin` | `15` | Minutes between money snapshots. |
+| `accountsEveryMin` | `15` | Minutes between bank account snapshots. |
+| `moneyFullEveryDays` | `7` | Days between full money snapshots. Other runs send changes only. |
+| `censusFullMaxDays` | `8` | A full item census also runs when the last one is older than this. |
+| `placeRadius` | per kind | Size in metres of each kind of place: `shop`, `garage`, `hospital`, `police`, `bank` and `custom`. |
+| `flushMs` | `250` | How often queued events are handed to the sender. |
+| `heartbeatMs` | `10000` | How often the agent reports that it is alive. |
+
+These are plain values, so changes are lost when you replace the files. Keep your edits when updating.
+
 ---
 
 ## Updating
 
-Download the new release, replace the files in the `atlas-agent` folder and restart the resource. Keep the `spool` folder if it exists: it holds events that are still waiting to be sent. Release notes are on the [Releases](https://github.com/OsmFX-Mods/atlas-agent/releases) page.
+Download the new release, replace the files in the `atlas-agent` folder and restart the resource. Keep the `spool` folder if it exists: it holds events that are still waiting to be sent. If you edited `config.lua`, copy your changes into the new file. Release notes are on the [Releases](https://github.com/OsmFX-Mods/atlas-agent/releases) page.
 
 ## Development
 

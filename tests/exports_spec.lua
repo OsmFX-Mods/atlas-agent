@@ -136,8 +136,11 @@ describe('exports.place', function()
         local api, suggested = boot()
         expect(api.place('Pier', { x = 10.04, y = 20.06, z = 1.0 })).toBe(true)
         expect(suggested[1]).toEqual({ { 'Pier', 'custom', 10.0, 20.1, 30.0 } })
+        AtlasConfig.placeRadius.custom = 45.0
+        api.place('Dock', { x = 3.0, y = 4.0 })
+        expect(suggested[2]).toEqual({ { 'Dock', 'custom', 3.0, 4.0, 45.0 } })
         api.place('Garage', { x = 1.0, y = 2.0 }, 12, 'garage')
-        expect(suggested[2]).toEqual({ { 'Garage', 'garage', 1.0, 2.0, 12 } })
+        expect(suggested[3]).toEqual({ { 'Garage', 'garage', 1.0, 2.0, 12 } })
         fx.teardown()
     end)
 

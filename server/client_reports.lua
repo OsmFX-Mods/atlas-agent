@@ -1,11 +1,11 @@
--- Client reports: validates shots-fired reports from client/combat.lua, which are untrusted.
--- Result: accepted events carry trust = "client"; rejects are counted and reported at most once a minute per player.
+-- Client reports: checks shot reports from client/combat.lua, which cannot be trusted.
+-- Accepted reports are marked trust = "client"; rejected ones are counted, and reported once a minute per player.
 
 local cfg = AtlasConfig
 local common, shots = AtlasLib.common, AtlasLib.shots
 local u32 = common.u32
 
--- Module flag: client_combat is a non-replicated convar, so clients read it from replicated GlobalState.
+-- Clients cannot read the convar, so the setting is shared through GlobalState.
 GlobalState.atlasClientCombat = cfg.clientCombat
 
 local function serverWeapons(p, src, gt)

@@ -35,7 +35,7 @@ describe('sandbox.load', function()
     end)
 
     it('cannot reach real globals', function()
-        -- Globals: os and io both resolve to the same inert value, not the real libraries
+        -- Globals: os and io both give the same empty value, not the real libraries
         local res = sandbox.load('return os == io and os.exit == io.open', 'escape.lua')
         expect(res).toBe(true)
     end)
@@ -77,7 +77,7 @@ describe('sandbox.items', function()
         expect(got[3][2]).toBe('c')
     end)
 
-    it('yields nothing for the inert value, which would make ipairs run forever', function()
+    it('yields nothing for the empty value, which would make ipairs run forever', function()
         local _, env = sandbox.load('Config = { shops = lib.missing }', 'config.lua')
         expect(#collect(rawget(env, 'Config').shops)).toBe(0)
         expect(#collect(sandbox.hole)).toBe(0)

@@ -1,5 +1,4 @@
--- Renewed-Banking adapter: the resource fires no event on balance changes, so account.change cannot come from events.
--- Balances: society and business accounts come from accounts.snapshot (server/snapshots.lua), which the daemon diffs.
+-- Renewed-Banking adapter: the resource has no balance event, so balances come from accounts.snapshot.
 
 local common = AtlasLib.common
 local NAME = 'renewed_banking'
@@ -10,7 +9,7 @@ Atlas.registerAdapter({
     attach = function() end,
 })
 
---- Accounts rows: [[account_id, kind, amount]] for one snapshot, or nil and an error; thread only, the database call yields.
+--- Accounts rows: [[account id, kind, amount]], or nil and an error; use inside a thread only.
 function Atlas.accountsRows()
     if not Atlas.adapterActive(NAME) then return nil, 'Renewed-Banking not started' end
     local rows, err = Atlas.db.query('SELECT id, amount, creator FROM bank_accounts_new')

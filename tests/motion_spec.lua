@@ -92,6 +92,16 @@ describe('motion.decide thresholds', function()
         expect(motion.decide(st, s(10, 0), 63000)).toBe('still')
     end)
 
+    it('follows the rules it is given', function()
+        local rules = { moveMeters = 5.0, turnDegrees = 90, stillEveryMs = 10000 }
+        local st = {}
+        motion.decide(st, s(0, 0), 0, rules)
+        expect(motion.decide(st, s(4.0, 0), 3000, rules)).toBe('skip')
+        expect(motion.decide(st, s(5.0, 0), 6000, rules)).toBe('sample')
+        expect(motion.decide(st, s(5.0, 0, 80), 9000, rules)).toBe('skip')
+        expect(motion.decide(st, s(5.0, 0), 16000, rules)).toBe('still')
+    end)
+
     it('builds a vehicle key from model and seat', function()
         expect(motion.vehicleKey(nil, nil)).toBe('foot')
         expect(motion.vehicleKey(123, 'driver')).toBe('123:driver')

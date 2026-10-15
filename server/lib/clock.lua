@@ -1,11 +1,11 @@
--- Clock: millisecond UTC timestamps from os.time (whole seconds) and GetGameTimer (monotonic ms); pure, sources injected.
--- Anchor: taken when os.time ticks to a new second, retaken periodically for drift and NTP; now() never goes backwards.
+-- Clock: UTC time in milliseconds, built from os.time (seconds) and GetGameTimer (ms), both passed in.
+-- Anchor: set when os.time moves to a new second and reset now and then; now() never goes back.
 
 AtlasLib = AtlasLib or {}
 local M = {}
 
---- @param osTime fun(): integer   seconds since epoch (UTC)
---- @param gameTimer fun(): integer monotonic ms
+--- @param osTime fun(): integer   seconds since 1970 (UTC)
+--- @param gameTimer fun(): integer milliseconds that only go up
 function M.new(osTime, gameTimer)
     local c = {
         osTime = osTime,
@@ -15,11 +15,11 @@ function M.new(osTime, gameTimer)
         calibrated = false,
         lastSec = osTime(),
         last = 0,
-        -- seeking: true while looking for the next second edge
+        -- seeking: true while waiting for the next whole second
         seeking = true,
     }
 
-    --- Now: current UTC time in ms, integer and non-decreasing.
+    --- Now: current UTC time in ms; never goes back.
     function c.now()
         local ms = c.baseMs + (c.gameTimer() - c.baseGt)
         if ms < c.last then ms = c.last end
@@ -27,7 +27,7 @@ function M.new(osTime, gameTimer)
         return ms
     end
 
-    --- Step: call once per tick while seeking; returns true when this call took an anchor.
+    --- Step: call each tick while seeking; returns true once the clock is lined up.
     function c.step()
         local s = c.osTime()
         if s ~= c.lastSec then
@@ -43,7 +43,7 @@ function M.new(osTime, gameTimer)
         return false
     end
 
-    --- Recalibrate: starts looking for a new second edge for periodic re-anchoring.
+    --- Recalibrate: starts waiting for the next whole second to line the clock up again.
     function c.recalibrate()
         c.lastSec = c.osTime()
         c.seeking = true

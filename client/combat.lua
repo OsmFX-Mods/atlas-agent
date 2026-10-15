@@ -1,11 +1,11 @@
--- Client combat: counts shots per weapon and 25 m cell, sent as a latent event every 15 s or on holster (6 s minimum gap).
--- Trust: the server validates each report (server/client_reports.lua) and labels accepted ones trust = "client".
+-- Client combat: counts shots per weapon and 25 m square; sent every 15 s or on holster, at least 6 s apart.
+-- The server checks each report (server/client_reports.lua) and marks accepted ones trust = "client".
 
 local UNARMED = `WEAPON_UNARMED`
 local CELL = 25.0
-local MAX_CELLS = 60      -- MAX_CELLS: per-weapon cap, kept under the server cap of 64
+local MAX_CELLS = 60      -- Squares per weapon, kept under the server limit of 64
 local SEND_EVERY = 15000
-local SEND_MIN_GAP = 6000 -- SEND_MIN_GAP: the server accepts one report per 5 s
+local SEND_MIN_GAP = 6000 -- The server accepts one report per 5 s
 
 local agg, cellCount, pending = {}, {}, false
 local windowStart, lastSend = GetGameTimer(), 0
@@ -43,7 +43,7 @@ local function flush()
 end
 
 CreateThread(function()
-    -- Token check: once per session; a readable atlas:token means it was set with setr, and only its hash is reported
+    -- Token check: runs once; a readable atlas:token means it was set with setr, and only its hash is reported
     local token = GetConvar('atlas:token', '')
     if token ~= '' then
         TriggerServerEvent('atlas:c:env', { tokenHash = GetHashKey(token) })

@@ -1,12 +1,11 @@
--- Common: pure helpers with no FiveM globals, so plain Lua 5.4 can test them.
--- Loading: a server_script fills AtlasLib.common; tests load it with dofile() and receive M.
+-- Common: helpers that need no FiveM functions, so plain Lua can test them.
 
 AtlasLib = AtlasLib or {}
 local M = {}
 
 local floor, sqrt, abs = math.floor, math.sqrt, math.abs
 
---- Round: to 0.1 (10 cm), the precision positions are stored at.
+--- Round: rounds to 0.1, the precision positions are stored at.
 function M.round1(v)
     return floor(v * 10 + 0.5) / 10
 end
@@ -26,21 +25,21 @@ function M.dist2(ax, ay, bx, by)
     return sqrt(dx * dx + dy * dy)
 end
 
---- Heading difference: smallest absolute difference between two headings, 0 to 180 degrees.
+--- Heading difference: the smallest angle between two headings, 0 to 180 degrees.
 function M.headingDiff(a, b)
     local d = abs(a - b) % 360
     if d > 180 then d = 360 - d end
     return d
 end
 
---- Unsigned hash: normalises a GTA hash to unsigned 32-bit, since client natives return signed and some server events unsigned.
+--- Unsigned hash: converts a game hash to an unsigned 32-bit number, as natives and events differ in sign.
 function M.u32(h)
     if type(h) ~= 'number' then return nil end
     h = floor(h)
     return h & 0xFFFFFFFF
 end
 
---- Slice size: players to sample per slice so everyone is sampled once per `sampleMs`, spread evenly over `sliceMs` slices.
+--- Slice size: players to read per slice so everyone is read once per `sampleMs`.
 function M.perSlice(n, sampleMs, sliceMs)
     if n <= 0 then return 0 end
     local slices = sampleMs / (sliceMs or 50)
@@ -48,8 +47,8 @@ function M.perSlice(n, sampleMs, sliceMs)
     return math.ceil(n / slices)
 end
 
--- ULID: 48-bit ms timestamp plus 80 random bits in Crockford base32, used as the per-start `boot` id.
--- Ordering: ids sort by time, which the transport relies on to replay spool files of older boots first.
+-- Unique id: 26 characters that start with the time, so ids sort by age; used as the boot id.
+-- Order: transport.js sends saved events from older starts first.
 local ENC = '0123456789ABCDEFGHJKMNPQRSTVWXYZ'
 
 function M.ulid(nowMs, rand)
@@ -68,11 +67,11 @@ function M.ulid(nowMs, rand)
     return table.concat(out)
 end
 
--- Identifier prefixes: the list kept for players; IPs are never collected.
+-- Identifiers kept for players; IP addresses are never collected.
 local KEEP_IDS = { license = true, license2 = true, discord = true, fivem = true, steam = true, xbl = true, live = true }
 local ACCOUNT_ORDER = { 'license2', 'license', 'fivem', 'discord' }
 
---- Identifiers: turns a GetPlayerIdentifiers() list into { prefix = 'prefix:value' } without IPs.
+--- Identifiers: turns the player's identifier list into { prefix = 'prefix:value' }, leaving out IPs.
 --- Account id: the first of license2, license, fivem, discord.
 function M.pickIdentifiers(list)
     local ids = {}
@@ -89,8 +88,8 @@ function M.pickIdentifiers(list)
     return ids, account
 end
 
---- Account kind: classifies a Renewed-Banking bank_accounts_new row for accounts.snapshot.
---- Groups: jobs and gangs are sets of qbx group names.
+--- Account kind: tells whether a Renewed-Banking account belongs to a job, a gang, a person or a business.
+--- Groups: jobs and gangs are sets of group names.
 function M.accountKind(id, creator, jobs, gangs)
     if jobs and jobs[id] then return 'job' end
     if gangs and gangs[id] then return 'gang' end
@@ -98,7 +97,7 @@ function M.accountKind(id, creator, jobs, gangs)
     return 'business'
 end
 
---- Chat summary: message length and command name (first word after '/'), plus the text only when content capture is enabled.
+--- Chat summary: message length and command name; the text is added only when chat content is on.
 function M.chatSummary(text, withContent)
     if type(text) ~= 'string' then return nil end
     local data = { len = #text }
@@ -108,7 +107,7 @@ function M.chatSummary(text, withContent)
     return data
 end
 
---- FNV-1a: stable 32-bit string hash for non-reversible ids where GetHashKey is unavailable, as in tests.
+--- Hash: a fixed 32-bit hash of a string, for places where GetHashKey is not available, such as tests.
 function M.fnv1a(s)
     local h = 0x811C9DC5
     for i = 1, #s do
@@ -118,10 +117,10 @@ function M.fnv1a(s)
     return h
 end
 
--- Sanitize limits: caps on what a script can hand to exports.track, since the data crosses to JS as is.
+-- Sanitize limits: caps on the data a script can pass to the track export.
 local MAX_DEPTH, MAX_KEYS, MAX_STR, MAX_KEY = 4, 64, 1024, 64
 
---- Sanitize: copies plain data only (strings, finite numbers, booleans, tables); functions, userdata and cycles are dropped.
+--- Sanitize: copies strings, numbers, booleans and tables only, within the limits above.
 function M.sanitize(v, depth)
     depth = depth or 0
     local t = type(v)

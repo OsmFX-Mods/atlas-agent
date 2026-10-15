@@ -187,6 +187,20 @@ describe('natives combat', function()
         fx.teardown()
     end)
 
+    it('uses the damage and explosion limits from the config', function()
+        boot()
+        AtlasConfig.damageRatePerSec = 5
+        AtlasConfig.explosionRatePerSec = 2
+        online(1); online(2)
+        for _ = 1, 10 do hit(1, 2) end
+        expect(#events('combat.damage')).toBe(5)
+        for _ = 1, 4 do
+            fx.net('explosionEvent', nil, 1, { posX = 1.0, posY = 2.0, posZ = 3.0, explosionType = 2, damageScale = 1.0 })
+        end
+        expect(#events('combat.explosion')).toBe(2)
+        fx.teardown()
+    end)
+
     it('forgets rate windows when a player drops', function()
         boot()
         online(1); online(2)

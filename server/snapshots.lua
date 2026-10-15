@@ -1,5 +1,5 @@
--- Snapshots: reads game data through oxmysql and emits it as events; the daemon never holds database credentials.
--- Paging: keyset pages with a Wait between them; delta runs use the database clock, so agent clock skew cannot skip rows.
+-- Snapshots: reads game data through oxmysql and sends it as events, so Atlas never needs database access.
+-- Paging: rows are read in pages with a pause between them; changes-only runs use the database clock.
 
 local cfg = AtlasConfig
 local common = AtlasLib.common
@@ -13,7 +13,7 @@ local moneySince      -- moneySince: database clock (s) at the start of the prev
 local lastMoneyAt, lastAccountsAt = 0, 0
 local catalogDone = false
 
--- Watermark: the database second before a run started, so rows stamped inside that second are read again, never skipped
+-- Watermark: the second before a run started, so rows saved in that second are read again, never missed
 local function watermark(dbNow) return floor(dbNow) - 1 end
 
 local function kvpNum(key)
@@ -209,8 +209,8 @@ local function vehiclesCensus()
     Atlas.emit('vehicles.census', { census_id = newId('v'), rows = out })
 end
 
--- Vehicles owned: hooks only see vehicles bought or handed over while Atlas runs, so this full list fills the gaps.
--- Privacy: sends model hash and plate hash per owner, never the plate; paged by id, one page per slice.
+-- Vehicles owned: hooks only see vehicles bought or handed over while Atlas runs; this list fills the gaps.
+-- Privacy: sends a hash of the model and plate for each owner, never the plate itself.
 local function vehiclesOwned()
     local per = cfg.censusPageRows
     local pages = pagesFor(db.scalar('SELECT COUNT(*) FROM player_vehicles WHERE citizenid IS NOT NULL'), 0, per)
@@ -267,7 +267,7 @@ function Atlas.pricesCatalog()
             emitChunks('vehicle', entries)
         end
     end
-    -- Properties: qbx_properties houses and apartments for sale only; rentals and free apartments (price 0) are skipped
+    -- Properties: qbx_properties homes for sale only; rentals and free apartments (price 0) are skipped
     if GetResourceState('qbx_properties') == 'started' and db.available() then
         local rows = db.query(
             'SELECT id, property_name, price FROM properties WHERE price > 0 AND rent_interval IS NULL ORDER BY id LIMIT 5000')
@@ -326,7 +326,7 @@ local function censusDue()
     local firstEver = kvpNum('atlas:census_full_at') == nil
     if not firstEver and tonumber(os.date('%H')) ~= cfg.censusHour then return nil end
     local lastFull = kvpNum('atlas:census_full_at') or 0
-    if firstEver or tonumber(os.date('%w')) == cfg.censusFullWeekday or os.time() - lastFull > 8 * 86400 then
+    if firstEver or tonumber(os.date('%w')) == cfg.censusFullWeekday or os.time() - lastFull > cfg.censusFullMaxDays * 86400 then
         return 'full', today
     end
     return 'delta', today
@@ -357,7 +357,7 @@ CreateThread(function()
                 lastMoneyAt = now
             elseif now - lastMoneyAt >= cfg.moneyEveryMin * 60000 then
                 local lastFull = kvpNum('atlas:money_full_at') or 0
-                local mode = (os.time() - lastFull > 7 * 86400) and 'full' or 'delta'
+                local mode = (os.time() - lastFull > cfg.moneyFullEveryDays * 86400) and 'full' or 'delta'
                 if run('money.snapshot', moneySnapshot, mode) then lastMoneyAt = now end
             end
             if now - lastAccountsAt >= cfg.accountsEveryMin * 60000 then

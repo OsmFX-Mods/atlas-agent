@@ -1,6 +1,7 @@
--- Exports: public API for other scripts, called as exports['atlas-agent'] (exports.atlas works through the manifest alias).
--- Attribution: the calling resource is recorded in the envelope's `res` field.
+-- Exports: functions for other scripts, called as exports['atlas-agent'] (exports.atlas also works).
+-- The calling resource is recorded in the event's `res` field.
 
+local cfg = AtlasConfig
 local common = AtlasLib.common
 
 local function cleanName(name)
@@ -48,7 +49,7 @@ exports('place', function(name, coords, radius, kind)
         type(kind) == 'string' and kind or 'custom',
         common.round1(x),
         common.round1(y),
-        tonumber(radius) or 30.0,
+        tonumber(radius) or cfg.placeRadius[kind] or cfg.placeRadius.custom,
     } })
     return true
 end)

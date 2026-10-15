@@ -14,7 +14,7 @@ local MODULES = {
     'server/core.lua',
 }
 
---- Jenkins one-at-a-time hash over the lowercased string, as GetHashKey returns it (signed 32-bit).
+--- Hash: the same signed 32-bit hash that GetHashKey returns.
 local function joaat(s)
     local h = 0
     s = s:lower()

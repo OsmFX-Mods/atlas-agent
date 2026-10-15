@@ -1,5 +1,5 @@
--- Commands: console-only, or ACE command.atlas_bench and command.atlas_selftest.
--- Output: atlas_bench [n] shows emit and sampler cost; atlas_selftest [id] checks token, transport, adapters, database, clock.
+-- Commands: console only, or ACE command.atlas_bench and command.atlas_selftest.
+-- atlas_bench [n] shows what the agent costs; atlas_selftest [id] checks token, connection, adapters, database, clock.
 
 local function out(fmt, ...) print(('^5[atlas]^7 ' .. fmt):format(...)) end
 local function mark(ok) return ok and '^2OK^7  ' or '^1FAIL^7' end
@@ -19,7 +19,7 @@ RegisterCommand('atlas_bench', function(source, args)
         st.samples, AtlasConfig.sampleMs)
     out('flush     : %d flushes, %d events, avg %s us/flush',
         st.flushes, st.flushed, fmtUs(st.flushes > 0 and st.flushNs / st.flushes or 0))
-    -- CPU: sums timed agent paths (emit, sampler, flush); framework dispatch into handlers is excluded
+    -- CPU: adds up the time spent in emit, sampler and flush; time inside event handlers is not counted
     local agentMsPerS = (st.emitNs + st.samplerNs + st.flushNs) / 1e6 / upS
     out('agent CPU : %.3f ms per second (~%.4f ms per 50 ms server tick)', agentMsPerS, agentMsPerS / 20)
     out('lua queue : %d buffered', Atlas.bufferDepth())
@@ -51,7 +51,7 @@ RegisterCommand('atlas_selftest', function(source, args)
             js and tostring(js.state) or '?', js and tostring(js.endpoint) or '?')
         if js and js.lastError then out('     last transport error: %s', js.lastError) end
 
-        -- Clock: checks the second-edge calibration
+        -- Clock: checks the clock was lined up to the second
         out('%s clock calibrated to the second edge', mark(Atlas.clock.calibrated))
         if Atlas.db.available() then
             local t0 = GetGameTimer()
@@ -92,7 +92,7 @@ RegisterCommand('atlas_selftest', function(source, args)
             out('%s qbx money hook fires (player %s)', mark(ok and Atlas.selftestMoneySeen), src)
         end
 
-        -- End to end: emits a marker event and waits up to 15 s for the daemon to acknowledge it
+        -- End to end: sends a marker event and waits up to 15 s for Atlas to confirm it
         local seq = Atlas.emit('custom.atlas_selftest', { at = os.time() })
         local deadline, acked = GetGameTimer() + 15000, false
         while seq and GetGameTimer() < deadline do
@@ -100,7 +100,7 @@ RegisterCommand('atlas_selftest', function(source, args)
             if j and j.ackedBoot == Atlas.boot and (tonumber(j.ackedSeq) or 0) >= seq then acked = true break end
             Wait(250)
         end
-        out('%s daemon acknowledged a test event (seq %s)', mark(acked), tostring(seq))
+        out('%s Atlas confirmed a test event (seq %s)', mark(acked), tostring(seq))
         out('--- done ---')
     end)
 end, true)

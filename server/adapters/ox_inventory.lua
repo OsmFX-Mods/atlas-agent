@@ -1,14 +1,14 @@
--- ox_inventory adapter: registers hooks through exports.ox_inventory:registerHook (built against 2.45.0).
--- Hooks: run synchronously before the action applies, so callbacks never yield and return true to avoid cancelling it.
+-- ox_inventory adapter: listens through ox_inventory hooks (built against 2.45.0).
+-- Hooks: run before the action happens, so they never wait and always return true to allow it.
 
 local cfg = AtlasConfig
 local inv = AtlasLib.inventory
 local NAME = 'ox_inventory'
 
-local accountItems = { money = true } -- accountItems: money-as-item accounts (inventory:accounts)
+local accountItems = { money = true } -- accountItems: money kept as items (inventory:accounts)
 
---- Hook wrapper: runs the body, never throws, always returns true.
---- Accuracy: a hook means the action was allowed, not completed; the daily item census reconciles totals.
+--- Hook wrapper: runs the body, never raises an error and always returns true.
+--- A hook fires before the action finishes, so the daily item census corrects any difference.
 local function hook(fn)
     return function(payload)
         if not Atlas.enabled then return true end
@@ -115,7 +115,7 @@ Atlas.registerAdapter({
         if cfg.oxCreateItem then ox:registerHook('createItem', onCreate, opts) end
         if cfg.placeVisits then
             ox:registerHook('openShop', onOpenShop, opts)
-        -- typeFilter: lets ox skip the cross-resource call for other inventory types
+            -- typeFilter: lets ox_inventory skip the call for other inventory types
             ox:registerHook('openInventory', onOpenStash, { print = false, typeFilter = { stash = true } })
         end
 

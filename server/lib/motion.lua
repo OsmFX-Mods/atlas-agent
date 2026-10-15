@@ -1,38 +1,34 @@
--- Motion: sampler decisions, pure; a player who moved under 1 m, turned under 20 degrees and kept vehicle and bucket
--- sends no sample, only position.still every 30 s at most.
+-- Motion: decides what each position sample sends; needs lib/common.lua loaded first.
 
 AtlasLib = AtlasLib or {}
 local M = {}
 
-M.MOVE_M = 1.0
-M.TURN_DEG = 20
-M.STILL_EVERY_MS = 30000
+local sqrt = math.sqrt
+local headingDiff = AtlasLib.common.headingDiff
 
-local sqrt, abs = math.sqrt, math.abs
+-- Rules: used when no rules are passed; the agent passes the values from config.lua.
+M.DEFAULT_RULES = { moveMeters = 1.0, turnDegrees = 20, stillEveryMs = 30000 }
 
-local function headingDiff(a, b)
-    local d = abs(a - b) % 360
-    if d > 180 then d = 360 - d end
-    return d
-end
-
---- Decide: returns what to emit for one sample, 'sample', 'still' or 'skip'.
---- @param st table per-player sampler state (mutated): last = last full sample, stillSince, lastStillAt
+--- Decide: returns 'sample', 'still' or 'skip' for one sample.
+--- A player who has not moved, turned or changed vehicle or bucket sends only a still marker every stillEveryMs.
+--- @param st table per-player state (updated here): last, stillSince, lastStillAt
 --- @param cur table { x, y, z, h, vkey, bucket }
 --- @param now integer ms
+--- @param rules table? { moveMeters, turnDegrees, stillEveryMs }
 --- @return 'sample'|'still'|'skip'
-function M.decide(st, cur, now)
+function M.decide(st, cur, now, rules)
+    rules = rules or M.DEFAULT_RULES
     local last = st.last
     if last then
         local dx, dy, dz = cur.x - last.x, cur.y - last.y, cur.z - last.z
-        local moved = sqrt(dx * dx + dy * dy + dz * dz) >= M.MOVE_M
-            or headingDiff(cur.h, last.h) >= M.TURN_DEG
+        local moved = sqrt(dx * dx + dy * dy + dz * dz) >= rules.moveMeters
+            or headingDiff(cur.h, last.h) >= rules.turnDegrees
             or cur.vkey ~= last.vkey
             or cur.bucket ~= last.bucket
         if not moved then
             if not st.stillSince then st.stillSince = last.t end
             local ref = st.lastStillAt or last.t
-            if now - ref >= M.STILL_EVERY_MS then
+            if now - ref >= rules.stillEveryMs then
                 st.lastStillAt = now
                 return 'still'
             end
@@ -46,13 +42,13 @@ function M.decide(st, cur, now)
     return 'sample'
 end
 
---- Vehicle key: vehicle state used to compare against the last sample.
+--- Vehicle key: on foot, or vehicle model and seat, to spot a change between samples.
 function M.vehicleKey(model, seat)
     if not model then return 'foot' end
     return model .. ':' .. seat
 end
 
---- Nearby: srcs of `players` ({ src, x, y }) within `radius` of (cx, cy), used by the combat boost.
+--- Within: sources of `players` ({ src, x, y }) inside `radius` of (cx, cy).
 function M.within(players, cx, cy, radius)
     local out, r2 = {}, radius * radius
     for i = 1, #players do

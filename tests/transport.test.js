@@ -16,8 +16,8 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 function tmpDir() { return fs.mkdtempSync(path.join(os.tmpdir(), 'atlas-spool-')); }
 
-/** Fake daemon: records batches; `mode(batch)` returns {status, body}. */
-function daemon(host) {
+/** Fake Atlas server: records batches; `mode(batch)` returns {status, body}. */
+function fakeAtlas(host) {
   const d = { batches: [], seen: [], hwm: {}, mode: null, inFlight: 0, maxInFlight: 0 };
   d.server = http.createServer((req, res) => {
     d.inFlight++;
@@ -104,7 +104,7 @@ test('serialize: optional fields appear only when valid', () => {
 });
 
 test('sends in seq order, one batch in flight, frees on ack, no gzip on loopback', async () => {
-  const d = await daemon();
+  const d = await fakeAtlas();
   const t = mk(d);
   t.start(BOOT_A); await t.loadSpoolDir();
   for (let i = 0; i < 25; i++) t.push(Array.from({ length: 100 }, () => ev()));
@@ -121,7 +121,7 @@ test('sends in seq order, one batch in flight, frees on ack, no gzip on loopback
 });
 
 test('retries the same batch after 503 and network errors', async () => {
-  const d = await daemon();
+  const d = await fakeAtlas();
   let fails = 3;
   d.mode = () => (fails-- > 0 ? { status: 503 } : null);
   const t = mk(d);
@@ -135,7 +135,7 @@ test('retries the same batch after 503 and network errors', async () => {
 });
 
 test('401 backs off, keeps the batch and retries it unchanged', async () => {
-  const d = await daemon();
+  const d = await fakeAtlas();
   let fails = 2;
   d.mode = () => (fails-- > 0 ? { status: 401 } : null);
   const t = mk(d);
@@ -151,7 +151,7 @@ test('401 backs off, keeps the batch and retries it unchanged', async () => {
 });
 
 test('413 splits batches; 400 drops and counts', async () => {
-  const d = await daemon();
+  const d = await fakeAtlas();
   d.mode = (b) => (b.lines.length > 100 ? { status: 413 } : null);
   const t = mk(d);
   t.start(BOOT_A); await t.loadSpoolDir();
@@ -165,7 +165,7 @@ test('413 splits batches; 400 drops and counts', async () => {
 });
 
 test('heartbeat gets transport queue depth and drops', async () => {
-  const d = await daemon();
+  const d = await fakeAtlas();
   const t = mk(d, { batchAgeMs: 200 });
   t.start(BOOT_A); await t.loadSpoolDir();
   t._state.drops.malformed = 4;
@@ -182,7 +182,7 @@ test('heartbeat gets transport queue depth and drops', async () => {
 });
 
 test('outage: spills to disk, replays spool before memory, deletes files', async () => {
-  const d = await daemon();
+  const d = await fakeAtlas();
   const dir = tmpDir();
   let down = true;
   d.mode = () => (down ? { status: 503 } : null);
@@ -194,7 +194,7 @@ test('outage: spills to disk, replays spool before memory, deletes files', async
   assert.ok(t.stats().mem <= 300);
   down = false;
   await until(() => t.stats().mem === 0 && t.stats().spoolFiles === 0 && t.stats().inflight === 0, 8000);
-  // Ack timing: the daemon records a batch before the client processes its ack, so wait for all rows to land.
+  // Ack timing: the fake server records a batch before the client processes its ack, so wait for all rows to land.
   await until(() => allSeqs(d, BOOT_A).length >= 1000, 3000);
   const seqs = allSeqs(d, BOOT_A);
   assert.strictEqual(seqs.length, 1000);
@@ -205,7 +205,7 @@ test('outage: spills to disk, replays spool before memory, deletes files', async
 });
 
 test('stop persists the queue; next start replays the old boot first', async () => {
-  const d = await daemon();
+  const d = await fakeAtlas();
   const dir = tmpDir();
   d.mode = () => ({ status: 503 });
   const t1 = mk(d, { spoolDir: dir });
@@ -231,7 +231,7 @@ test('stop persists the queue; next start replays the old boot first', async () 
 });
 
 test('spool cap strips position.sample from a segment and keeps everything else', async () => {
-  const d = await daemon();
+  const d = await fakeAtlas();
   const dir = tmpDir();
   d.mode = () => ({ status: 503 });
   // Pump: off, since a segment being sent is exempt from the cap and would make the outcome timing-dependent
@@ -254,7 +254,7 @@ test('spool cap strips position.sample from a segment and keeps everything else'
 });
 
 test('spool cap deletes the oldest whole segments once positions are gone', async () => {
-  const d = await daemon();
+  const d = await fakeAtlas();
   const dir = tmpDir();
   d.mode = () => ({ status: 503 });
   const t = mk(d, { spoolDir: dir, memEvents: 100, spillChunk: 100, spoolBytes: 1, autoPump: false });
@@ -268,7 +268,7 @@ test('spool cap deletes the oldest whole segments once positions are gone', asyn
 });
 
 test('spool segments that cannot be written are dropped instead of piling up in memory', async () => {
-  const d = await daemon();
+  const d = await fakeAtlas();
   const dir = tmpDir();
   const blocker = path.join(dir, 'file');
   fs.writeFileSync(blocker, 'x');
@@ -285,7 +285,7 @@ test('spool segments that cannot be written are dropped instead of piling up in 
 });
 
 test('replay never starts on a segment while the cap is rewriting it', async () => {
-  const d = await daemon();
+  const d = await fakeAtlas();
   const dir = tmpDir();
   const t = mk(d, { spoolDir: dir, memEvents: 1499, spillChunk: 1500, autoPump: false });
   t.start(BOOT_A); await t.loadSpoolDir();
@@ -323,7 +323,7 @@ test('gzip is requested for remote endpoints and skipped for loopback ones', () 
 test('gzips the body on the wire for a non-loopback address', async () => {
   const ext = Object.values(os.networkInterfaces()).flat().find((i) => i && i.family === 'IPv4' && !i.internal);
   if (!ext) { console.log('     skipped: no non-loopback IPv4 interface'); return; }
-  const d = await daemon(ext.address);
+  const d = await fakeAtlas(ext.address);
   const t = mk(d);
   t.start(BOOT_A); await t.loadSpoolDir();
   t.push([ev(), ev(), ev()]);
@@ -334,7 +334,7 @@ test('gzips the body on the wire for a non-loopback address', async () => {
 });
 
 test('marks batches holding events older than 14 days with X-Atlas-Replay', async () => {
-  const d = await daemon();
+  const d = await fakeAtlas();
   const t = mk(d);
   t.start(BOOT_A); await t.loadSpoolDir();
   t.push([ev('money.change', { ts: Date.now() - 15 * 86400000 })]);
@@ -347,7 +347,7 @@ test('marks batches holding events older than 14 days with X-Atlas-Replay', asyn
 });
 
 test('resends only the unacknowledged tail after a partial ack', async () => {
-  const d = await daemon();
+  const d = await fakeAtlas();
   let first = true;
   d.mode = (b) => {
     if (!first) return null;
@@ -365,7 +365,7 @@ test('resends only the unacknowledged tail after a partial ack', async () => {
 });
 
 test('treats an ack that covers nothing as a stall, then drops the batch after five tries', async () => {
-  const d = await daemon();
+  const d = await fakeAtlas();
   d.mode = () => ({ status: 200, body: JSON.stringify({ acked_seq: 0 }) });
   const t = mk(d);
   t.start(BOOT_A); await t.loadSpoolDir();
@@ -376,7 +376,7 @@ test('treats an ack that covers nothing as a stall, then drops the batch after f
 });
 
 test('retries when the 200 body is not a valid ack', async () => {
-  const d = await daemon();
+  const d = await fakeAtlas();
   let bad = 2;
   d.mode = () => (bad-- > 0 ? { status: 200, body: 'not json' } : null);
   const t = mk(d);
@@ -387,8 +387,8 @@ test('retries when the 200 body is not a valid ack', async () => {
   t.stop(); d.server.close();
 });
 
-test('drops a single event the daemon calls too large', async () => {
-  const d = await daemon();
+test('drops a single event the server calls too large', async () => {
+  const d = await fakeAtlas();
   d.mode = () => ({ status: 413 });
   const t = mk(d);
   t.start(BOOT_A); await t.loadSpoolDir();
@@ -399,7 +399,7 @@ test('drops a single event the daemon calls too large', async () => {
 });
 
 test('refuse discards the queue and stops all sending', async () => {
-  const d = await daemon();
+  const d = await fakeAtlas();
   const t = mk(d, { batchAgeMs: 500 });
   t.start(BOOT_A); await t.loadSpoolDir();
   t.push([ev(), ev()]);
@@ -413,7 +413,7 @@ test('refuse discards the queue and stops all sending', async () => {
 });
 
 test('refuse also stops replaying spool segments from an earlier run', async () => {
-  const d = await daemon();
+  const d = await fakeAtlas();
   const dir = tmpDir();
   d.mode = () => ({ status: 503 });
   const t1 = mk(d, { spoolDir: dir });
@@ -433,7 +433,7 @@ test('refuse also stops replaying spool segments from an earlier run', async () 
 });
 
 test('ignores events pushed before start, malformed input and unserialisable events', async () => {
-  const d = await daemon();
+  const d = await fakeAtlas();
   const t = mk(d);
   t.push([ev()]);
   assert.strictEqual(t.stats().mem, 0);
@@ -448,7 +448,7 @@ test('ignores events pushed before start, malformed input and unserialisable eve
 });
 
 test('never writes the token to the log', async () => {
-  const d = await daemon();
+  const d = await fakeAtlas();
   const lines = [];
   let mode = 0;
   d.mode = () => [{ status: 401 }, { status: 503 }, { status: 400, body: 'bad' }][mode++] || null;
@@ -486,7 +486,7 @@ test('reports a bad endpoint without sending anything', () => {
 });
 
 test('drops an unreadable spool segment and keeps sending newer events', async () => {
-  const d = await daemon();
+  const d = await fakeAtlas();
   const dir = tmpDir();
   fs.writeFileSync(path.join(dir, `${BOOT_A}-${'1'.padStart(12, '0')}-${'5'.padStart(12, '0')}-5.ndjson.gz`), 'not gzip');
   fs.writeFileSync(path.join(dir, 'leftover.tmp'), 'partial');
