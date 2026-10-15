@@ -384,6 +384,21 @@ describe('core heartbeat', function()
         fx.teardown()
     end)
 
+    it('reports the console state in the heartbeat', function()
+        boot()
+        Atlas.consoleState = 'unsupported'
+        fx.tick()
+        fx.advance(AtlasConfig.heartbeatMs + 100)
+        Atlas.jsReady = true
+        Atlas.flush()
+        local hb
+        for _, ev in ipairs(fx.triggered('atlas:internal:batch')[1][1]) do
+            if ev.type == 'agent.heartbeat' then hb = ev end
+        end
+        expect(hb.data.logs).toEqual({ console = 'unsupported' })
+        fx.teardown()
+    end)
+
     it('stops once the agent refuses', function()
         boot()
         fx.tick()

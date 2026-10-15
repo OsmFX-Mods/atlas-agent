@@ -48,6 +48,15 @@ AtlasConfig = {
     -- Place size: radius in metres per kind of place; custom is used for places added by other scripts
     placeRadius = { shop = 15.0, garage = 30.0, hospital = 40.0, police = 40.0, bank = 20.0, custom = 30.0 },
 
+    -- Console: script errors and warnings are sent to Atlas. A line is kept if it has a word from
+    -- consoleWords (any letter case); at most consoleMaxLines per second, cut to consoleMaxChars characters
+    console = GetConvarInt('atlas:console', 1) == 1,
+    consoleWords = { 'error', 'failed', 'warning', 'hitch' },
+    consoleMaxLines = 100,
+    consoleMaxChars = 1000,
+    -- Console: lines that follow a script error (stack lines) are kept for this many ms
+    consoleStackMs = 2000,
+
     -- Buffer: events held in Lua between sends; overflow is counted
     luaBufferMax = 20000,
     flushMs = 250,

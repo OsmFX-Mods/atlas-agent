@@ -63,6 +63,7 @@ The agent only reads facts that already exist on your server.
 | **Vehicles and medical** | Ownership and transfers from `qbx_vehicles`, check-ins and revives from `qbx_medical`. |
 | **Sessions** | Joins, leaves, character changes, job and gang changes, resource restarts. |
 | **Chat** | Message length and command name only. Message text is off unless you turn it on. |
+| **Logs** | Log lines from `ox_lib`'s logger when it is pointed at Atlas (see [Logs](#logs)), plus script errors and warnings from the server console. |
 
 **Privacy.** Player names and the identifiers `license`, `license2`, `discord`, `fivem`, `steam`, `xbl` and `live` are sent so Atlas can tell players apart. IP addresses are never sent.
 
@@ -113,6 +114,34 @@ Both are restricted to the console, or to ACE `command.atlas_selftest` and `comm
 
 ---
 
+## Logs
+
+Atlas shows log text on its Logs page. The agent gets it there two ways.
+
+### 1. ox_lib straight to Atlas
+
+`ox_lib` sends its logs to one place only. If no other log service uses it, point its Loki logger at Atlas. Every script that calls `lib.logger` (including `qbx_core` and `ox_inventory`) then logs to Atlas.
+
+```cfg
+set ox:logger "loki"
+set loki:endpoint "https://your-atlas-address"   # same value as atlas:endpoint
+set loki:user "atlas"
+set loki:password "atl_live_..."                 # same value as atlas:token
+```
+
+If you already send `ox_lib` logs to Fivemanage, Datadog or Grafana Loki, keep that. Atlas does not share the stream, so script log lines will not appear in Atlas; everything else the agent sends still does.
+
+### 2. Console capture
+
+Script errors and warnings are printed to the server console and written to `fxserver.log`, which Atlas cannot read. The agent listens to the console and sends lines that contain `SCRIPT ERROR`, `error`, `failed`, `warning` or `hitch` in any letter case, plus the stack lines that follow a script error. It is on by default; set `atlas:console 0` to turn it off. The words, the line limit and the line length can be changed in `config.lua`.
+
+### Limits
+
+- Console capture relies on the `RegisterConsoleListener` native, which has not been confirmed on every server build. The heartbeat reports `logs.console` as `on`, `unsupported` (the native is missing) or `off`, so Atlas shows whether it is active.
+- The agent does not read `fxserver.log` and does not collect logs from scripts that do not use `lib.logger` or print to the console.
+
+---
+
 ## Configuration
 
 Everything has a sensible default. The common settings are convars: add them to `server.cfg` with `set`. Everything else is in [`config.lua`](config.lua).
@@ -131,6 +160,7 @@ Everything has a sensible default. The common settings are convars: add them to 
 | `atlas:ox_createitem` | `0` | Record every `ox_inventory` item creation. Noisy, so off by default. |
 | `atlas:census_full_weekday` | `0` | Weekday of the full item census, 0 for Sunday. Other days send changes only. |
 | `atlas:spool_mb` | `200` | Disk space for events kept while Atlas is unreachable. |
+| `atlas:console` | `1` | Capture script errors and warnings from the server console. |
 | `atlas:debug` | `0` | Verbose console output. |
 
 If Atlas cannot be reached, events are kept on disk and sent in order once the connection is back.
@@ -153,6 +183,10 @@ If Atlas cannot be reached, events are kept on disk and sent in order once the c
 | `moneyFullEveryDays` | `7` | Days between full money snapshots. Other runs send changes only. |
 | `censusFullMaxDays` | `8` | A full item census also runs when the last one is older than this. |
 | `placeRadius` | per kind | Size in metres of each kind of place: `shop`, `garage`, `hospital`, `police`, `bank` and `custom`. |
+| `consoleWords` | `error`, `failed`, `warning`, `hitch` | Words that make a console line worth sending, in any letter case. |
+| `consoleMaxLines` | `100` | Most console lines sent per second. |
+| `consoleMaxChars` | `1000` | Console lines are cut to this length. |
+| `consoleStackMs` | `2000` | How long the lines after a script error are kept. |
 | `flushMs` | `250` | How often queued events are handed to the sender. |
 | `heartbeatMs` | `10000` | How often the agent reports that it is alive. |
 

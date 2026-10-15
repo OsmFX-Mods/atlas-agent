@@ -36,6 +36,8 @@ server_scripts {
     'server/adapters/qbx_vehicles.lua',
     'server/adapters/qbx_medical.lua',
     'server/adapters/renewed_banking.lua',
+    -- Console: script errors and warnings from the server console
+    'server/console.lua',
     -- Features: snapshots, places, client reports, exports and commands
     'server/snapshots.lua',
     'server/places.lua',
