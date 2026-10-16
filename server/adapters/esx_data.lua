@@ -14,16 +14,15 @@ local function tbl(key)
     return name
 end
 
-local SLOTS = { cash = true, bank = true, crypto = true }
-
---- Slots: sums account balances into the cash, bank and crypto slots as configured; accounts left out of the mapping are skipped.
+--- Slots: sums account balances by money type as configured; accounts left out of the mapping are skipped.
+--- Cash, bank and crypto are the types money snapshots carry; any other type name is reported in money changes only.
 --- @param accounts table account name to balance
 local function slots(accounts)
     local out = { cash = 0, bank = 0, crypto = 0 }
     for name, amount in pairs(accounts) do
-        local slot = cfg.esx.accounts[tostring(name):lower()]
+        local kind = cfg.esx.accounts[tostring(name):lower()]
         amount = tonumber(amount)
-        if SLOTS[slot] and amount then out[slot] = out[slot] + amount end
+        if type(kind) == 'string' and kind ~= '' and amount then out[kind] = (out[kind] or 0) + amount end
     end
     return out
 end
@@ -145,7 +144,7 @@ AddEventHandler('onResourceStop', function(res)
 end)
 
 Atlas.frameworkData.esx = {
-    slots = slots, -- slots: used by the adapter to turn live account balances into money slots
+    slots = slots, -- slots: used by the adapter to turn live account balances into money types
     shared = shared, -- shared: the cached ESX object, also used by the adapter
     money = money,
     census = function()

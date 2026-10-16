@@ -185,6 +185,12 @@ local function natives()
     set('GetVehiclePedIsIn', function(id) return entity(S.players[id - 1000]).vehicle and id or 0 end)
     set('GetEntityModel', function(id) return entity(S.players[id - 1000]).vehicle.model end)
     set('GetVehicleType', function(id) return entity(S.players[id - 1000]).vehicle.vtype end)
+    set('AddStateBagChangeHandler', function(key, bag, fn)
+        S.bagHandlers[#S.bagHandlers + 1] = { key = key, bag = bag, fn = fn }
+    end)
+    set('GetPlayerFromStateBagName', function(name)
+        return tonumber(tostring(name):match('^player:(%d+)$')) or 0
+    end)
     set('GetPedInVehicleSeat', function(id)
         local veh = entity(S.players[id - 1000]).vehicle
         return veh.driver and id or 0
@@ -244,6 +250,7 @@ function fx.boot(opts)
         convars = opts.convars or {}, resources = opts.resources or {},
         players = {}, handlers = {}, triggered = {}, threads = {}, printed = {},
         exported = {}, provided = opts.provided or {}, commands = {}, kvp = {}, files = opts.files or {}, invoker = nil,
+        bagHandlers = {},
     }
     fx.state = S
 
@@ -315,6 +322,14 @@ function fx.net(name, src, ...)
     _G.source = src
     for _, fn in ipairs(S.handlers[name] or {}) do fn(...) end
     _G.source = nil
+end
+
+--- State bag: sets a key on a player's state bag and runs the change handlers for it, like Player(src).state:set on the server.
+function fx.stateBag(src, key, value)
+    local bag = 'player:' .. src
+    for _, h in ipairs(S.bagHandlers) do
+        if (h.key == nil or h.key == key) and (h.bag == nil or h.bag == bag) then h.fn(bag, key, value, 0, true) end
+    end
 end
 
 --- Triggered: argument lists of every TriggerEvent(name, ...) so far.

@@ -35,7 +35,7 @@ describe('manifest load order', function()
         fx.boot({ convars = { ['atlas:token'] = 'atl_live_x' }, load = loadOrder() })
         local names = {}
         for _, def in ipairs(Atlas.adapterList()) do names[def.name] = true end
-        for _, name in ipairs({ 'natives', 'qbox', 'esx', 'esx_death', 'ox_inventory', 'qbx_vehicles', 'qbx_medical', 'renewed_banking' }) do
+        for _, name in ipairs({ 'natives', 'qbox', 'esx', 'esx_death', 'esx_ambulancejob', 'ox_inventory', 'qbx_vehicles', 'qbx_medical', 'renewed_banking' }) do
             expect(names[name]).toBe(true)
         end
         expect(#Atlas.sourceResources('places') > 0 or next(Atlas.sourceResources('places')) ~= nil).toBe(true)

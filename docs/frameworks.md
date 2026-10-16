@@ -31,7 +31,7 @@ With `none`, or when no supported framework is installed, the agent sends the ac
 | Money snapshot | `players` table | `users` table |
 | Item census | `players`, trunks, gloveboxes | `users`, stashes through `ox_inventory` |
 | Vehicles owned | `player_vehicles` | `owned_vehicles` |
-| Deaths and revives | `qbx_core` state | `esx_death` (ESX 1.16 and later) |
+| Deaths and revives | `qbx_core` state | `esx_death` (ESX 1.16), or `esx_ambulancejob` (older ESX) |
 | Society accounts | `Renewed-Banking` | `esx_addonaccount` (and `Renewed-Banking`) |
 | Places | `qbx_garages`, `qbx_ambulancejob`, `qbx_police` | `esx_garage`, `esx_ambulancejob`, `esx_policejob`, `esx_shops` |
 | Prices | `qbx_core` vehicles, `qbx_properties` | `vehicles` table, `esx_shops` items |
@@ -40,9 +40,9 @@ Both also use `ox_inventory` shops, stashes and items when it is installed.
 
 ### ESX notes
 
-- **Money accounts.** `money` and `black_money` count as cash, `bank` as bank. Change the mapping in `config.lua` (`esx.accounts`); accounts left out are not tracked.
+- **Money accounts.** `money` counts as cash and `bank` as bank. `black_money` is reported as its own money type, so dirty money never mixes with cash or shows in the city's money supply. Change the mapping in `config.lua` (`esx.accounts`): map an account to `cash`, `bank` or `crypto` to include it in money snapshots, or give it any other name to report it in money changes only. Accounts left out are not tracked.
 - **Money with `ox_inventory`.** On ESX 1.16, each money change is reported twice when `ox_inventory` is installed: once as a copy of the item into the account, then as the real change. The agent sends one event for it. Older versions report it once. A move made in the inventory window, which ESX reports only as the copy, is sent as a set.
-- **Older ESX.** `esx_garage` and `esx_shops` are read in both their 1.16 layout and the older single `config.lua` layout. Deaths and revives need `esx_death`, which ships with ESX 1.16; servers on the older `esx_ambulancejob` get no death or revive events yet.
+- **Older ESX.** `esx_garage` and `esx_shops` are read in both their 1.16 layout and the older single `config.lua` layout. Deaths and revives come from `esx_death` on 1.16. On older versions they come from `esx_ambulancejob`: the agent reads the dead state it sets, takes a new death from the client's death event, and tells a hospital respawn from a revive by the respawn callback. A death saved before login is not reported as new. When `esx_death` is running, it is used instead.
 - **Snapshots.** ESX has no reliable change time on every setup. The agent checks whether `users.last_seen` updates with the row; if it does, snapshots read only changed rows, and if not, it sends a full money snapshot every hour (`moneyFullEveryMin`).
 - **Not covered.** ESX sends no server event when a character is deleted or a vehicle is bought, so those show up in the next snapshot instead.
 - **Table names.** Renamed tables can be set in `config.lua` (`esx.tables`, `qbox.tables`).
