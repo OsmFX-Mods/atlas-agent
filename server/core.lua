@@ -77,11 +77,18 @@ function Atlas.drop(reason, n)
 end
 
 -- Actor: who a player is, attached to every event.
+--- Character id: the loaded character, or the account id when no framework is installed (see framework.lua).
+function Atlas.effectiveChar(p)
+    if p.char then return p.char end
+    if Atlas.charFallback == nil and Atlas.refreshFallback then Atlas.refreshFallback() end
+    return Atlas.charFallback and p.account or nil
+end
+
 --- Actor rebuild: makes a new table, so queued events keep the identity they were sent with.
 function Atlas.rebuildActor(p)
     p.actor = {
         account = p.account,
-        char = p.char,
+        char = Atlas.effectiveChar(p),
         name = p.charName or p.name,
         job = p.job,
         grade = p.grade,
@@ -102,7 +109,7 @@ local function newPlayer(src)
         sessionId = nil,
         joinedAt = clock.now(),
         pos = nil,          -- pos: last known {x,y,z}
-        money = {},         -- money: last known balances, set by the Qbox adapter
+        money = {},         -- money: last known balance per money type (cash, bank, crypto), kept by money.lua
         recent = {},        -- recent: last sampled {x,y} points, used to check shot reports
         recentN = 0,
         recentAt = nil,     -- recentAt: game time of the last point
@@ -158,10 +165,15 @@ end
 
 function Atlas.charOf(src)
     local p = Atlas.players[src]
-    return p and p.char
+    return p and Atlas.effectiveChar(p)
 end
 
---- Character: set by the Qbox adapter when a character loads.
+--- Actors rebuilt: for every player, after the character fallback switched on or off.
+function Atlas.rebuildActors()
+    for _, p in pairs(Atlas.players) do Atlas.rebuildActor(p) end
+end
+
+--- Character: set by the framework adapter when a character loads.
 function Atlas.setChar(src, char, charName)
     local p = Atlas.ensurePlayer(src)
     if not p then return end

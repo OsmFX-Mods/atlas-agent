@@ -97,6 +97,19 @@ function M.accountKind(id, creator, jobs, gangs)
     return 'business'
 end
 
+--- SQL name: a table or column name from the config as a quoted identifier, or nil when it has anything but letters, digits and underscores.
+function M.sqlName(name)
+    if type(name) ~= 'string' or not name:find('^[%w_]+$') then return nil end
+    return '`' .. name .. '`'
+end
+
+--- Plate: trimmed and upper-cased, the form plates are hashed in; nil when there is none.
+function M.plate(plate)
+    if type(plate) ~= 'string' then return nil end
+    local s = plate:upper():gsub('^%s+', ''):gsub('%s+$', '')
+    return s ~= '' and s or nil
+end
+
 --- Chat summary: message length and command name; the text is added only when chat content is on.
 function M.chatSummary(text, withContent)
     if type(text) ~= 'string' then return nil end

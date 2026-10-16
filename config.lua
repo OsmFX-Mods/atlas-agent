@@ -4,6 +4,9 @@
 AtlasConfig = {
     endpoint = GetConvar('atlas:endpoint', 'http://127.0.0.1:7271'),
 
+    -- Framework: 'auto' uses the one that is installed; name one (qbox, esx) to force it; 'none' sends the account id as the character id
+    framework = GetConvar('atlas:framework', 'auto'):lower(),
+
     -- Positions: ms between samples per player (500 or more)
     sampleMs = math.max(500, GetConvarInt('atlas:sample_ms', 3000)),
     -- Fights: players within boostRadius metres are sampled every boostSampleMs for boostMs
@@ -31,8 +34,10 @@ AtlasConfig = {
     snapshots = GetConvarInt('atlas:snapshots', 1) == 1,
     moneyEveryMin = 15,
     accountsEveryMin = 15,
-    -- Money: a full run every moneyFullEveryDays, changes only in between
+    -- Money: a full run every moneyFullEveryDays, changes only in between; a framework that cannot list
+    -- changed rows runs a full one every moneyFullEveryMin minutes instead
     moneyFullEveryDays = 7,
+    moneyFullEveryMin = 60,
     -- Census: daily at this server-local hour, with a full run on this weekday (0 = Sunday)
     censusHour = GetConvarInt('atlas:census_hour', 5),
     censusFullWeekday = GetConvarInt('atlas:census_full_weekday', 0),
@@ -65,4 +70,21 @@ AtlasConfig = {
     -- Spool: disk space for unsent events is set with the atlas:spool_mb convar (200 by default), read by transport.js
 
     debug = GetConvarInt('atlas:debug', 0) == 1,
+
+    -- Qbox: database table names, for servers that renamed them
+    qbox = {
+        tables = { characters = 'players', vehicles = 'player_vehicles', properties = 'properties' },
+    },
+
+    -- ESX: account mapping and database table names, for servers that renamed them
+    esx = {
+        -- Accounts: ESX account name to the money type it counts as (cash, bank or crypto); accounts left out are not tracked
+        accounts = { money = 'cash', bank = 'bank', black_money = 'cash' },
+        tables = {
+            characters = 'users', vehicles = 'owned_vehicles', vehiclePrices = 'vehicles',
+            items = 'items', societyAccounts = 'addon_account_data',
+        },
+        -- Changed column: the users timestamp that updates with the row, so only changed rows are read; leave empty to read every row
+        changedColumn = 'last_seen',
+    },
 }

@@ -19,8 +19,9 @@ local function boot(over)
         resources = { qbx_core = 'started', qbx_medical = 'started' },
         provided = { qbx_core = qbx },
         load = {
-            'server/db.lua', 'server/sampler.lua', 'server/adapters/detect.lua',
-            'server/adapters/natives.lua', 'server/adapters/qbox.lua', 'server/adapters/qbx_medical.lua',
+            'server/db.lua', 'server/sampler.lua', 'server/adapters/detect.lua', 'server/sources.lua',
+            'server/framework.lua', 'server/characters.lua', 'server/money.lua', 'server/adapters/natives.lua',
+            'server/adapters/qbox_data.lua', 'server/adapters/qbox.lua', 'server/adapters/qbx_medical.lua',
         },
     })
     state.db = { rows = {}, scalar = nil, scalarErr = nil }
@@ -515,7 +516,7 @@ end)
 describe('qbox groups', function()
     it('lists job and gang names for account classification', function()
         boot()
-        local jobs, gangs = Atlas.qbxGroups()
+        local jobs, gangs = Atlas.groups()
         expect(jobs.police).toBe(true)
         expect(gangs.ballas).toBe(true)
         fx.teardown()

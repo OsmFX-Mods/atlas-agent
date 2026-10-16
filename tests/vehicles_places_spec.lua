@@ -92,7 +92,7 @@ describe('qbx_ambulancejob check-in hook', function()
                 removeHooks = function() end,
                 registerHook = function(_, name, fn) registered[name] = fn end,
             } },
-            load = { 'server/adapters/detect.lua', 'server/adapters/qbx_medical.lua' },
+            load = { 'server/adapters/detect.lua', 'server/characters.lua', 'server/adapters/qbx_medical.lua' },
         })
         fx.advance(200)
         fx.addPlayer(4, {})
@@ -117,8 +117,9 @@ describe('Renewed-Banking accounts', function()
                 GetGangs = function() return { ballas = {} } end,
             } },
             load = {
-                'server/db.lua', 'server/sampler.lua', 'server/adapters/detect.lua', 'server/adapters/natives.lua',
-                'server/adapters/qbox.lua', 'server/adapters/renewed_banking.lua',
+                'server/db.lua', 'server/sampler.lua', 'server/adapters/detect.lua', 'server/sources.lua',
+                'server/framework.lua', 'server/characters.lua', 'server/money.lua', 'server/adapters/natives.lua',
+                'server/adapters/qbox_data.lua', 'server/adapters/qbox.lua', 'server/adapters/renewed_banking.lua',
             },
         })
         fx.advance(200)
@@ -136,12 +137,12 @@ describe('Renewed-Banking accounts', function()
     it('returns an error when the resource is not running or the query fails', function()
         fx.boot({
             convars = { ['atlas:token'] = 'atl_live_x' }, resources = {},
-            load = { 'server/db.lua', 'server/adapters/detect.lua', 'server/adapters/renewed_banking.lua' },
+            load = { 'server/db.lua', 'server/adapters/detect.lua', 'server/sources.lua', 'server/adapters/renewed_banking.lua' },
         })
         fx.advance(200)
         local rows, err = Atlas.accountsRows()
         expect(rows).toBeNil()
-        expect(err).toBe('Renewed-Banking not started')
+        expect(err).toBe('no account source started')
         fx.teardown()
     end)
 end)
@@ -150,7 +151,11 @@ describe('places import', function()
     local function boot(files, provided, resources)
         fx.boot({
             convars = { ['atlas:token'] = 'atl_live_x' }, resources = resources or {}, files = files or {},
-            provided = provided or {}, load = { 'server/places.lua' },
+            provided = provided or {}, load = {
+                'server/db.lua', 'server/adapters/detect.lua', 'server/sources.lua', 'server/framework.lua',
+                'server/adapters/qbox_data.lua', 'server/adapters/ox_inventory_data.lua', 'server/adapters/renewed_banking.lua',
+                'server/places.lua',
+            },
         })
     end
 

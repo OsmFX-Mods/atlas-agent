@@ -7,6 +7,16 @@ local NAME = 'ox_inventory'
 
 local accountItems = { money = true } -- accountItems: money kept as items (inventory:accounts)
 
+--- Account item: money kept as an item mirrors a framework account, so the framework's money events already cover it.
+local function isAccountItem(name)
+    if accountItems[name] then return true end
+    local list = Atlas.framework and Atlas.framework.inventoryAccounts
+    for i = 1, list and #list or 0 do
+        if list[i] == name then return true end
+    end
+    return false
+end
+
 --- Hook wrapper: runs the body, never raises an error and always returns true.
 --- A hook fires before the action finishes, so the daily item census corrects any difference.
 local function hook(fn)
@@ -52,7 +62,7 @@ end)
 
 local onCreate = hook(function(p)
     local item = type(p.item) == 'table' and p.item.name
-    if type(item) ~= 'string' or accountItems[item] then return end
+    if type(item) ~= 'string' or isAccountItem(item) then return end
     local id = p.inventoryId
     local kind = inv.kindFromId(id)
     Atlas.emit('item.create', {
@@ -100,7 +110,7 @@ Atlas.registerAdapter({
     resources = { 'ox_inventory' },
     attach = function()
         local ox = exports.ox_inventory
-        -- Money items: qbx mirrors accounts as items after every money change, so money.change already covers them
+        -- Money items: the framework mirrors accounts as items after every money change, so money.change already covers them
         accountItems = { money = true }
         for name in GetConvar('inventory:accounts', '["money"]'):gmatch('"([^"]+)"') do accountItems[name] = true end
 

@@ -28,10 +28,20 @@ server_scripts {
     'server/core.lua',
     'server/db.lua',
     'server/sampler.lua',
-    -- Adapters: attach when their target resource starts, in any start order
+    -- Foundation: what every framework adapter builds on (sources, framework registry, characters, money)
+    'server/sources.lua',
     'server/adapters/detect.lua',
+    'server/framework.lua',
+    'server/characters.lua',
+    'server/money.lua',
+    -- Adapters: attach when their target resource starts, in any start order
     'server/adapters/natives.lua',
+    'server/adapters/qbox_data.lua',
     'server/adapters/qbox.lua',
+    'server/adapters/esx_data.lua',
+    'server/adapters/esx.lua',
+    'server/adapters/esx_death.lua',
+    'server/adapters/ox_inventory_data.lua',
     'server/adapters/ox_inventory.lua',
     'server/adapters/qbx_vehicles.lua',
     'server/adapters/qbx_medical.lua',

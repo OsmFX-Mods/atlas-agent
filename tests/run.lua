@@ -67,7 +67,7 @@ function load_module(rel)
     return dofile(base .. '/' .. rel)
 end
 
-local specs = { 'common', 'clock', 'motion', 'shots', 'inventory', 'sandbox', 'core', 'sampler', 'client_reports', 'exports', 'adapters', 'snapshots', 'natives', 'qbox', 'ox_inventory', 'vehicles_places', 'commands', 'db', 'console' }
+local specs = { 'common', 'clock', 'motion', 'shots', 'inventory', 'sandbox', 'sources', 'framework', 'characters', 'money', 'core', 'sampler', 'client_reports', 'exports', 'adapters', 'snapshots', 'natives', 'qbox', 'esx', 'esx_data', 'ox_inventory', 'vehicles_places', 'commands', 'db', 'console', 'manifest' }
 for _, name in ipairs(specs) do
     dofile(base .. '/tests/' .. name .. '_spec.lua')
 end

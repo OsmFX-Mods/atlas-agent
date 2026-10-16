@@ -85,3 +85,34 @@ describe('inventory buy/craft/kind', function()
         expect(inv.kind('newdrop')).toBe('drop')
     end)
 end)
+
+describe('inventory.census', function()
+    local json = {
+        decode = function(s)
+            if s == '{"water":2,"bread":1,"none":0}' then return { water = 2, bread = 1, none = 0 } end
+            if s == '{"1":{"name":"water"}}' then return { ['1'] = { name = 'water' } } end
+            if s == '{}' then return {} end
+            error('bad json')
+        end,
+        encode = function(list)
+            local parts = {}
+            for i, it in ipairs(list) do parts[i] = it.name .. ':' .. it.count end
+            return table.concat(parts, ',')
+        end,
+    }
+
+    it('turns a name to count table into a sorted list without empty entries', function()
+        expect(inv.census('{"water":2,"bread":1,"none":0}', json)).toBe('bread:1,water:2')
+    end)
+
+    it('leaves lists and slot tables as stored', function()
+        expect(inv.census('[{"name":"water","count":1}]', json)).toBe('[{"name":"water","count":1}]')
+        expect(inv.census('{"1":{"name":"water"}}', json)).toBe('{"1":{"name":"water"}}')
+    end)
+
+    it('sends an empty list for missing, empty or broken data', function()
+        expect(inv.census(nil, json)).toBe('[]')
+        expect(inv.census('', json)).toBe('[]')
+        expect(inv.census('{broken', json)).toBe('[]')
+    end)
+end)

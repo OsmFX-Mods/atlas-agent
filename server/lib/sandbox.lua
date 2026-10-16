@@ -8,6 +8,7 @@ local hole
 hole = setmetatable({}, {
     __index = function() return hole end,
     __call = function() return hole end,
+    __newindex = function() end, -- newindex: writes are dropped, so a config cannot leave values behind for the next one
     __tostring = function() return '' end,
 })
 M.hole = hole
@@ -40,8 +41,9 @@ end
 --- @param src string Lua source
 --- @param chunkname string
 --- @param vectors table? { vec3 = fn, vector3 = fn, ... } (FiveM provides real ones)
+--- @param globals table? values to define before the file runs, for files that add to a table another file creates
 --- @return any result, table env  (result = the chunk's return value)
-function M.load(src, chunkname, vectors)
+function M.load(src, chunkname, vectors, globals)
     if type(src) ~= 'string' or src == '' then return nil, nil end
     vectors = vectors or {}
     local env = {
@@ -52,6 +54,7 @@ function M.load(src, chunkname, vectors)
         vector2 = vectors.vector2 or vec, vector3 = vectors.vector3 or vec, vector4 = vectors.vector4 or vec,
         joaat = vectors.joaat, GetHashKey = vectors.joaat,
     }
+    for k, v in pairs(globals or {}) do env[k] = v end
     setmetatable(env, { __index = function() return hole end })
     local fn, err = load(src, '@' .. chunkname, 't', env)
     if not fn then return nil, nil, err end

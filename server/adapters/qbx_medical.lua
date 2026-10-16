@@ -5,14 +5,10 @@ local NAME_MED, NAME_AMB = 'qbx_medical', 'qbx_ambulancejob'
 local checkInCost -- checkInCost: read from qbx_ambulancejob config/shared.lua
 
 -- Respawn: sends medical.respawn and teleport.known after qbx_medical's respawn hooks pass.
--- Marks the player as respawned, so the state change after it is not reported as a revive (see qbox.lua).
+-- Marks the player as respawned, so the state change after it is not reported as a revive.
 AddEventHandler('qbx_medical:server:playerRespawned', function(src)
     if not Atlas.enabled or not Atlas.adapterActive(NAME_MED) then return end
-    src = tonumber(src)
-    local p = Atlas.players[src]
-    if p then p.respawned = true end
-    Atlas.emit('medical.respawn', {}, src, { fresh = true })
-    Atlas.emit('teleport.known', { reason = 'respawn' }, src)
+    Atlas.characters.respawn(src)
 end)
 
 local function onCheckIn(p)

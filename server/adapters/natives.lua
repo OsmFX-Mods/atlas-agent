@@ -9,7 +9,7 @@ local NAME = 'natives'
 local sessionCounter = 0
 local connectAt = {} -- connectAt: when each player started connecting, by temporary id
 
-Atlas.lastLethal = {} -- lastLethal: the last killing hit per victim { src, char, weapon, gt }, used for combat.death
+Atlas.lastLethal = Atlas.lastLethal or {} -- lastLethal: the last killing hit per victim { src, char, weapon, gt }, used for combat.death
 
 local function newSessionId(src)
     sessionCounter = sessionCounter + 1
@@ -110,7 +110,7 @@ AddEventHandler('weaponDamageEvent', function(sender, data)
     local willKill = data.willKill == true
 
     Atlas.emit('combat.damage', {
-        victim = { src = victimSrc, char = vp and vp.char or nil, npc = not isPlayer, pos = common.pos(vc.x, vc.y, vc.z) },
+        victim = { src = victimSrc, char = vp and Atlas.effectiveChar(vp) or nil, npc = not isPlayer, pos = common.pos(vc.x, vc.y, vc.z) },
         weapon = weapon,
         dmg = tonumber(data.weaponDamage) or 0,
         will_kill = willKill,
@@ -176,7 +176,7 @@ local function adminAction(action, target, by, detail)
     local p = src and Atlas.players[src]
     Atlas.emit('admin.action', {
         action = action,
-        target_char = p and p.char or nil,
+        target_char = p and Atlas.effectiveChar(p) or nil,
         by = type(by) == 'string' and by:sub(1, 64) or nil,
         detail = type(detail) == 'string' and detail:sub(1, 512) or nil,
     }, p and src or nil)

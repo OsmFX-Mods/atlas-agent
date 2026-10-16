@@ -5,7 +5,11 @@ local DB_NOW = 1790000100.5
 local function boot(convars)
     convars = convars or { ['atlas:snapshots'] = 0 }
     convars['atlas:token'] = 'atl_live_x'
-    fx.boot({ convars = convars, load = { 'server/db.lua', 'server/snapshots.lua' } })
+    fx.boot({ convars = convars, load = {
+        'server/db.lua', 'server/adapters/detect.lua', 'server/sources.lua', 'server/framework.lua',
+        'server/adapters/qbox_data.lua', 'server/adapters/ox_inventory_data.lua', 'server/snapshots.lua',
+    } })
+    Atlas.framework = { name = 'qbox', data = Atlas.frameworkData.qbox }
     AtlasConfig.moneyPageRows = 2
     AtlasConfig.censusPageRows = 2
 end
@@ -307,6 +311,99 @@ describe('catalog on resource start', function()
         for _, fn in ipairs(fx.state.handlers.onResourceStart) do fn('ox_inventory') end
         fx.advance(40000, 500)
         expect(calls).toBe(1)
+        fx.teardown()
+    end)
+end)
+
+describe('snapshot readers', function()
+    it('skips money and vehicles when no framework is attached', function()
+        boot()
+        Atlas.framework = nil
+        fakeDb(fiveCharacters(), 'citizenid')
+        run(function() Atlas.snapshots.money('full') end)
+        run(function() Atlas.snapshots.vehicles() end)
+        expect(#snapshots('money.snapshot')).toBe(0)
+        expect(#snapshots('vehicles.owned')).toBe(0)
+        fx.teardown()
+    end)
+
+    it('still sends stash census without a framework when ox_inventory is started', function()
+        boot()
+        Atlas.framework = nil
+        fx.state.resources.ox_inventory = 'started'
+        Atlas.db.available = function() return true end
+        Atlas.db.now = function() return DB_NOW end
+        Atlas.db.query = function() return {} end
+        Atlas.db.scalar = function() return 0 end
+        run(function() Atlas.snapshots.census('full') end)
+        local kinds = {}
+        for _, ev in ipairs(snapshots('items.census')) do kinds[#kinds + 1] = ev.data.holder_kind end
+        expect(kinds).toEqual({ 'stash' })
+        fx.teardown()
+    end)
+
+    it('leaves the accounts list out of the census for Qbox, where money is the default item', function()
+        boot()
+        fx.state.resources.ox_inventory = 'started'
+        Atlas.db.available = function() return true end
+        Atlas.db.now = function() return DB_NOW end
+        Atlas.db.query = function() return {} end
+        Atlas.db.scalar = function() return 0 end
+        run(function() Atlas.snapshots.census('full') end)
+        for _, ev in ipairs(snapshots('items.census')) do expect(ev.data.accounts).toBeNil() end
+        fx.teardown()
+    end)
+
+    it('orders census kinds by their order value and always sends kinds without delta in full', function()
+        boot()
+        fx.state.resources.ox_inventory = 'started'
+        Atlas.db.available = function() return true end
+        Atlas.db.now = function() return DB_NOW end
+        Atlas.db.query = function() return {} end
+        Atlas.db.scalar = function() return 0 end
+        run(function() Atlas.snapshots.census('delta') end)
+        local seen = {}
+        for _, ev in ipairs(snapshots('items.census')) do seen[ev.data.holder_kind] = ev.data.mode end
+        expect(seen.player).toBe('full') -- no watermark yet, so the first run is full
+        expect(seen.trunk).toBe('full')
+        fx.state.kvp['atlas:census_since'] = '1790000000'
+        fx.state.triggered = {}
+        run(function() Atlas.snapshots.census('delta') end)
+        seen = {}
+        for _, ev in ipairs(snapshots('items.census')) do seen[ev.data.holder_kind] = ev.data.mode end
+        expect(seen.player).toBe('delta')
+        expect(seen.stash).toBe('delta')
+        expect(seen.trunk).toBe('full')
+        expect(seen.glovebox).toBe('full')
+        fx.teardown()
+    end)
+
+    it('reads from the configured table names', function()
+        boot()
+        local log = fakeDb(fiveCharacters(), 'citizenid')
+        AtlasConfig.qbox.tables.characters = 'my_players'
+        run(function() Atlas.snapshots.money('full') end)
+        expect(log[1].sql:find('FROM `my_players`', 1, true) ~= nil).toBe(true)
+        fx.teardown()
+    end)
+
+    it('warns and sends nothing for an invalid table name', function()
+        boot()
+        fakeDb(fiveCharacters(), 'citizenid')
+        AtlasConfig.qbox.tables.characters = 'players; DROP'
+        run(function() Atlas.snapshots.money('full') end)
+        expect(#snapshots('money.snapshot')).toBe(0)
+        expect(#fx.printed('qbox.tables.characters is not a valid table name') > 0).toBe(true)
+        fx.teardown()
+    end)
+
+    it('calls a reader init before each money snapshot', function()
+        boot()
+        fakeDb(fiveCharacters(), 'citizenid')
+        local inits = 0
+        Atlas.framework.data.money.init = function() inits = inits + 1 end
+        run(function() Atlas.snapshots.money('full') end)
+        expect(inits).toBe(1)
         fx.teardown()
     end)
 end)

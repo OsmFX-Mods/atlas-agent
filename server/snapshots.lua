@@ -1,9 +1,8 @@
 -- Snapshots: reads game data through oxmysql and sends it as events, so Atlas never needs database access.
 -- Paging: rows are read in pages with a pause between them; changes-only runs use the database clock.
+-- Readers: the framework adapter supplies the queries (Atlas.reader); this file pages, adds live data and sends.
 
 local cfg = AtlasConfig
-local common = AtlasLib.common
-local sandbox = AtlasLib.sandbox
 local floor, ceil = math.floor, math.ceil
 local db = Atlas.db
 
@@ -38,24 +37,21 @@ local function pagesFor(count, extra, per)
 end
 
 -- Money snapshot: balances of changed characters; online players use live balances.
-local MONEY_SQL = [[SELECT citizenid,
-    COALESCE(JSON_EXTRACT(money, '$.cash') + 0, 0) AS cash,
-    COALESCE(JSON_EXTRACT(money, '$.bank') + 0, 0) AS bank,
-    COALESCE(JSON_EXTRACT(money, '$.crypto') + 0, 0) AS crypto
-    FROM players WHERE %s citizenid > ? ORDER BY citizenid LIMIT %d]]
-
+-- Reader: { delta, count(since), page(since, cursor, limit), init? }; a reader without delta sends online players only in delta mode.
+-- Init: runs before each snapshot and may query, for readers that learn from the database whether they can find changed rows.
 local function moneySnapshot(mode)
+    local reader = Atlas.reader('money')
+    if not reader then return end
+    if reader.init then reader.init() end
     local dbNow, err = db.now()
     if not dbNow then return Atlas.warn('money snapshot skipped: %s', tostring(err)) end
     local since = (mode == 'delta') and moneySince or nil
     if mode == 'delta' and not since then mode = 'full' end
+    local fromDb = mode == 'full' or reader.delta
 
-    local filter, params = '', {}
-    if mode == 'delta' then filter, params = 'last_updated >= FROM_UNIXTIME(?) AND', { since } end
+    local count = fromDb and reader.count(since) or 0
 
-    local count = db.scalar('SELECT COUNT(*) FROM players' .. (mode == 'delta' and ' WHERE last_updated >= FROM_UNIXTIME(?)' or ''), params)
-
-    -- Online players: always sent with live balances, since the database lags until qbx saves
+    -- Online players: always sent with live balances, since the database lags until the framework saves
     local online, onlineN = {}, 0
     for char, m in pairs(Atlas.onlineBalances and Atlas.onlineBalances() or {}) do
         online[char] = { m.cash or 0, m.bank or 0, m.crypto or 0 }
@@ -63,29 +59,29 @@ local function moneySnapshot(mode)
     end
 
     local per = cfg.moneyPageRows
-    local sql = MONEY_SQL:format(filter, per)
     local pages = pagesFor(count, onlineN, per)
     local id = newId('m')
-    local page, last, emitted = 0, '', {}
+    local page, cursor, emitted = 0, nil, {}
 
     while true do
-        local q = { table.unpack(params) }
-        q[#q + 1] = last
-        local rows = db.query(sql, q)
-        if type(rows) ~= 'table' then return Atlas.warn('money snapshot page failed') end -- watermark stays, so the next run is full
+        local rows, nextCursor, got = {}, nil, 0
+        if fromDb then
+            rows, nextCursor, got = reader.page(since, cursor, per)
+            if not rows then return Atlas.warn('money snapshot page failed') end -- watermark stays, so the next run is full
+        end
         local out = {}
         for i = 1, #rows do
             local r = rows[i]
-            local live = online[r.citizenid]
+            local live = online[r[1]]
             if live then
-                out[i] = { r.citizenid, live[1], live[2], live[3] }
-                emitted[r.citizenid] = true
+                out[i] = { r[1], live[1], live[2], live[3] }
+                emitted[r[1]] = true
             else
-                out[i] = { r.citizenid, tonumber(r.cash) or 0, tonumber(r.bank) or 0, tonumber(r.crypto) or 0 }
+                out[i] = r
             end
-            last = r.citizenid
         end
-        local done = #rows < per
+        cursor = nextCursor
+        local done = got < per
         -- Leftovers: online characters the query did not return go on the last page
         if done then
             for char, live in pairs(online) do
@@ -106,28 +102,37 @@ local function moneySnapshot(mode)
     Atlas.debug('money snapshot %s: %d pages', mode, page)
 end
 
--- Accounts snapshot: Renewed-Banking bank_accounts_new.
+-- Accounts snapshot: society and business balances from the active account sources.
 local function accountsSnapshot()
-    if not Atlas.accountsRows then return end
     local rows, err = Atlas.accountsRows()
     if not rows then return Atlas.debug('accounts snapshot skipped: %s', tostring(err)) end
     Atlas.emit('accounts.snapshot', { snapshot_id = newId('a'), rows = rows })
 end
 
 -- Census: items and vehicles.
-local function censusPages(id, mode, since, kind, countSql, countParams, pageFn)
+-- Kinds: { kind, order, delta, count(since), page(since, cursor, limit) }; the framework supplies player and vehicle kinds,
+-- and sources of kind 'census' add the rest (stashes). A kind without delta is always sent in full.
+local function censusKinds()
+    local get = Atlas.reader('census')
+    local kinds = get and get() or {}
+    for _, def in ipairs(Atlas.sources('census')) do kinds[#kinds + 1] = def end
+    table.sort(kinds, function(a, b) return (a.order or 50) < (b.order or 50) end)
+    return #kinds > 0 and kinds or nil
+end
+
+local function censusPages(id, mode, since, kind, accounts)
     local per = cfg.censusPageRows
-    local pages = pagesFor(db.scalar(countSql, countParams), 0, per)
+    local pages = pagesFor(kind.count(since), 0, per)
     local page, cursor = 0, nil
     while true do
-        local rows, nextCursor, got = pageFn(cursor, per)
-        if not rows then Atlas.warn('census %s page failed', kind) return false end
+        local rows, nextCursor, got = kind.page(since, cursor, per)
+        if not rows then Atlas.warn('census %s page failed', kind.kind) return false end
         page = page + 1
         if page > pages then pages = page end
         local done = got < per
         Atlas.emit('items.census', {
-            census_id = id, mode = mode, since_ts = toMs(since), holder_kind = kind,
-            rows = rows, page = page, pages = pages, final = done or nil,
+            census_id = id, mode = mode, since_ts = toMs(since), holder_kind = kind.kind,
+            rows = rows, page = page, pages = pages, final = done or nil, accounts = accounts,
         })
         if done then return true end
         cursor = nextCursor
@@ -136,63 +141,22 @@ local function censusPages(id, mode, since, kind, countSql, countParams, pageFn)
 end
 
 local function itemsCensus(mode)
-    if GetResourceState('ox_inventory') ~= 'started' then return end
+    local kinds = censusKinds()
+    if not kinds then return end
     local dbNow = db.now()
     if not dbNow then return end
     local since = (mode == 'delta') and kvpNum('atlas:census_since') or nil
     if mode == 'delta' and not since then mode = 'full' end
-    local delta = mode == 'delta'
     local id = newId('c')
+    local accounts = Atlas.framework and Atlas.framework.inventoryAccounts
 
-    -- Players: qbx_core players table inventories
-    local pWhere = delta and 'last_updated >= FROM_UNIXTIME(?) AND ' or ''
-    local pParams = delta and { since } or {}
-    local complete = censusPages(id, mode, since, 'player',
-        'SELECT COUNT(*) FROM players' .. (delta and ' WHERE last_updated >= FROM_UNIXTIME(?)' or ''), pParams,
-        function(cursor, per)
-            local q = { table.unpack(pParams) }
-            q[#q + 1] = cursor or ''
-            local rows = db.query(
-                ('SELECT citizenid, inventory FROM players WHERE %s citizenid > ? ORDER BY citizenid LIMIT %d'):format(pWhere, per), q)
-            if type(rows) ~= 'table' then return nil end
-            local out = {}
-            for i = 1, #rows do out[i] = { rows[i].citizenid, rows[i].inventory or '[]' } end
-            return out, rows[#rows] and rows[#rows].citizenid, #rows
-        end)
-
-    -- Stashes: ox_inventory stashes; owner is NULL or '' for shared stashes
-    local sWhere = delta and 'lastupdated >= FROM_UNIXTIME(?) AND ' or ''
-    complete = complete and censusPages(id, mode, since, 'stash',
-        'SELECT COUNT(*) FROM ox_inventory' .. (delta and ' WHERE lastupdated >= FROM_UNIXTIME(?)' or ''), pParams,
-        function(cursor, per)
-            local q = { table.unpack(pParams) }
-            q[#q + 1] = cursor and cursor[1] or ''
-            q[#q + 1] = cursor and cursor[2] or ''
-            local rows = db.query(([[SELECT COALESCE(owner, '') AS o, name, data FROM ox_inventory
-                WHERE %s (COALESCE(owner, ''), name) > (?, ?) ORDER BY COALESCE(owner, ''), name LIMIT %d]]):format(sWhere, per), q)
-            if type(rows) ~= 'table' then return nil end
-            local out = {}
-            for i = 1, #rows do
-                local r = rows[i]
-                out[i] = { r.o == '' and r.name or (r.name .. ':' .. r.o), r.data or '[]' }
-            end
-            local l = rows[#rows]
-            return out, l and { l.o, l.name }, #rows
-        end)
-
-    -- Trunks and gloveboxes: player_vehicles has no change timestamp for them, so they are always sent in full
-    for _, col in ipairs({ 'trunk', 'glovebox' }) do
-        complete = complete and censusPages(id, 'full', nil, col,
-            ('SELECT COUNT(*) FROM player_vehicles WHERE %s IS NOT NULL'):format(col), {},
-            function(cursor, per)
-                local rows = db.query(
-                    ('SELECT id, %s AS d FROM player_vehicles WHERE %s IS NOT NULL AND id > ? ORDER BY id LIMIT %d'):format(col, col, per),
-                    { cursor or 0 })
-                if type(rows) ~= 'table' then return nil end
-                local out = {}
-                for i = 1, #rows do out[i] = { tostring(rows[i].id), rows[i].d } end
-                return out, rows[#rows] and rows[#rows].id, #rows
-            end)
+    local complete = true
+    for _, kind in ipairs(kinds) do
+        if kind.delta then
+            complete = complete and censusPages(id, mode, since, kind, accounts)
+        else
+            complete = complete and censusPages(id, 'full', nil, kind, accounts)
+        end
     end
 
     -- Watermark: moves only after every kind finished, so a failed page makes the next run cover the same rows
@@ -202,38 +166,30 @@ local function itemsCensus(mode)
 end
 
 local function vehiclesCensus()
-    local rows = db.query('SELECT vehicle, COUNT(*) AS n FROM player_vehicles GROUP BY vehicle')
+    local reader = Atlas.reader('vehicles')
+    local rows = reader and reader.census and reader.census()
     if type(rows) ~= 'table' then return end
-    local out = {}
-    for i = 1, #rows do out[i] = { tostring(rows[i].vehicle), tonumber(rows[i].n) or 0 } end
-    Atlas.emit('vehicles.census', { census_id = newId('v'), rows = out })
+    Atlas.emit('vehicles.census', { census_id = newId('v'), rows = rows })
 end
 
 -- Vehicles owned: hooks only see vehicles bought or handed over while Atlas runs; this list fills the gaps.
 -- Privacy: sends a hash of the model and plate for each owner, never the plate itself.
+-- Reader: { count(), page(cursor, limit) } with rows of [owner char, model hash, plate hash].
 local function vehiclesOwned()
+    local reader = Atlas.reader('vehicles')
+    local owned = reader and reader.owned
+    if not owned then return end
     local per = cfg.censusPageRows
-    local pages = pagesFor(db.scalar('SELECT COUNT(*) FROM player_vehicles WHERE citizenid IS NOT NULL'), 0, per)
-    local id, page, cursor = newId('o'), 0, 0
+    local pages = pagesFor(owned.count(), 0, per)
+    local id, page, cursor = newId('o'), 0, nil
     while true do
-        local rows = db.query((
-            'SELECT id, citizenid, hash, vehicle, plate FROM player_vehicles ' ..
-            'WHERE citizenid IS NOT NULL AND id > ? ORDER BY id LIMIT %d'
-        ):format(per), { cursor })
-        if type(rows) ~= 'table' then Atlas.warn('vehicles.owned page failed') return end
-        local out = {}
-        for i = 1, #rows do
-            local r = rows[i]
-            local model = tonumber(r.hash)
-            if not model and type(r.vehicle) == 'string' then model = GetHashKey(r.vehicle) end
-            local plate = type(r.plate) == 'string' and r.plate:upper():gsub('^%s+', ''):gsub('%s+$', '') or nil
-            out[i] = { r.citizenid, model and common.u32(model) or 0, plate and common.u32(GetHashKey(plate)) or 0 }
-            cursor = r.id
-        end
+        local rows, nextCursor, got = owned.page(cursor, per)
+        if not rows then Atlas.warn('vehicles.owned page failed') return end
+        cursor = nextCursor
         page = page + 1
         if page > pages then pages = page end
-        local done = #rows < per
-        Atlas.emit('vehicles.owned', { snapshot_id = id, rows = out, page = page, pages = pages, final = done or nil })
+        local done = got < per
+        Atlas.emit('vehicles.owned', { snapshot_id = id, rows = rows, page = page, pages = pages, final = done or nil })
         if done then return end
         Wait(200)
     end
@@ -246,56 +202,11 @@ local function emitChunks(kind, entries)
     end
 end
 
+--- Prices catalog: each active prices source reads its own data and hands it over as entries of one kind.
 function Atlas.pricesCatalog()
-    if GetResourceState('qbx_core') == 'started' then
-        local ok, vehicles = pcall(function() return exports.qbx_core:GetVehiclesByName() end)
-        if ok and type(vehicles) == 'table' then
-            local entries = {}
-            for model, v in pairs(vehicles) do
-                if type(v) == 'table' and tonumber(v.price) then
-                    local label = ((v.brand or '') .. ' ' .. (v.name or model)):gsub('^%s+', '')
-                    local shop = v.shop
-                    if type(shop) == 'table' then shop = shop[1] end
-                    entries[#entries + 1] = {
-                        tostring(model), label, tonumber(v.price),
-                        type(shop) == 'string' and shop or '',
-                        type(v.category) == 'string' and v.category or '',
-                    }
-                end
-            end
-            table.sort(entries, function(a, b) return a[1] < b[1] end)
-            emitChunks('vehicle', entries)
-        end
-    end
-    -- Properties: qbx_properties homes for sale only; rentals and free apartments (price 0) are skipped
-    if GetResourceState('qbx_properties') == 'started' and db.available() then
-        local rows = db.query(
-            'SELECT id, property_name, price FROM properties WHERE price > 0 AND rent_interval IS NULL ORDER BY id LIMIT 5000')
-        if type(rows) == 'table' and #rows > 0 then
-            local entries = {}
-            for i = 1, #rows do
-                entries[i] = { tostring(rows[i].id), tostring(rows[i].property_name or ''), tonumber(rows[i].price) or 0, '', 'property' }
-            end
-            emitChunks('property', entries)
-        end
-    end
-    local shops = Atlas.loadOxShops and Atlas.loadOxShops()
-    if shops then
-        local entries, seen = {}, {}
-        for shopType, shop in pairs(shops) do
-            if type(shop) == 'table' and type(shop.inventory) == 'table' then
-                for _, it in sandbox.items(shop.inventory) do
-                    if type(it) == 'table' and type(it.name) == 'string' and tonumber(it.price) then
-                        local key = it.name .. '@' .. shopType
-                        if not seen[key] then
-                            seen[key] = true
-                            entries[#entries + 1] = { it.name, '', tonumber(it.price), tostring(shopType) }
-                        end
-                    end
-                end
-            end
-        end
-        emitChunks('item', entries)
+    for _, def in ipairs(Atlas.sources('prices')) do
+        local ok, err = pcall(def.read, emitChunks)
+        if not ok then Atlas.warn('prices from %s failed: %s', def.name, tostring(err)) end
     end
 end
 
@@ -333,7 +244,7 @@ local function censusDue()
 end
 
 AddEventHandler('onResourceStart', function(res)
-    if (res == 'qbx_core' or res == 'ox_inventory' or res == 'qbx_properties') and cfg.snapshots then
+    if cfg.snapshots and Atlas.sourceResources('prices')[res] then
         CreateThread(function()
             Wait(15000)
             if Atlas.enabled then runQueued('prices.catalog', Atlas.pricesCatalog) end
@@ -351,13 +262,16 @@ CreateThread(function()
             if not catalogDone then
                 catalogDone = run('prices.catalog', Atlas.pricesCatalog)
             end
-            if moneySince == nil then
+            local money = Atlas.reader('money')
+            if money and moneySince == nil then
                 -- Retry: the full run repeats every 30 s until the database answers
                 run('money.snapshot full', moneySnapshot, 'full')
                 lastMoneyAt = now
-            elseif now - lastMoneyAt >= cfg.moneyEveryMin * 60000 then
+            elseif money and now - lastMoneyAt >= cfg.moneyEveryMin * 60000 then
+                -- Full: readers that cannot find changed rows run full on a short cycle, the others once a week
                 local lastFull = kvpNum('atlas:money_full_at') or 0
-                local mode = (os.time() - lastFull > cfg.moneyFullEveryDays * 86400) and 'full' or 'delta'
+                local fullAfter = money.delta and cfg.moneyFullEveryDays * 86400 or cfg.moneyFullEveryMin * 60
+                local mode = (os.time() - lastFull > fullAfter) and 'full' or 'delta'
                 if run('money.snapshot', moneySnapshot, mode) then lastMoneyAt = now end
             end
             if now - lastAccountsAt >= cfg.accountsEveryMin * 60000 then
