@@ -41,6 +41,7 @@ server_scripts {
     'server/adapters/esx_data.lua',
     'server/adapters/esx.lua',
     'server/adapters/esx_death.lua',
+    'server/adapters/esx_ambulance.lua',
     'server/adapters/ox_inventory_data.lua',
     'server/adapters/ox_inventory.lua',
     'server/adapters/qbx_vehicles.lua',

@@ -9,8 +9,6 @@ local C, M = Atlas.characters, Atlas.money
 local NAME = 'esx'
 local SYNC_REASON = 'Sync account with item' -- SYNC_REASON: what ESX reports when it copies an ox_inventory money item into an account
 
-local SLOTS = { cash = true, bank = true, crypto = true }
-
 local data = Atlas.frameworkData.esx
 local ESX -- ESX: the shared object of es_extended, read when the adapter attaches
 local static = false -- static: true when es_extended can run one xPlayer method by export (newer versions, 1.13 on at least)
@@ -23,14 +21,14 @@ local function playerOf(src)
     return ok and type(x) == 'table' and x or nil
 end
 
---- Balances: the account balances of an xPlayer as cash, bank and crypto slots.
+--- Balances: the account balances of an xPlayer by money type.
 local function balances(xPlayer)
     local ok, accounts = pcall(xPlayer.getAccounts, true)
     if not ok or type(accounts) ~= 'table' then return nil end
     return data.slots(accounts)
 end
 
---- Live balances: the current slots of a source; the export avoids copying the whole xPlayer on every money event.
+--- Live balances: the current balances of a source by money type; the export avoids copying the whole xPlayer on every money event.
 local function liveBalances(src)
     if not static then
         local xPlayer = playerOf(src)
@@ -136,8 +134,8 @@ local function onMoney(action)
         src, amount = tonumber(src), tonumber(amount)
         if not src or not amount or type(account) ~= 'string' then return end
         account = account:lower()
-        local slot = cfg.esx.accounts[account]
-        if not SLOTS[slot] then return end
+        local slot = cfg.esx.accounts[account] -- slot: the money type this account counts as
+        if type(slot) ~= 'string' or slot == '' then return end
 
         local p = Atlas.players[src]
         local live = liveBalances(src)

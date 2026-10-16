@@ -78,12 +78,17 @@ AtlasConfig = {
 
     -- ESX: account mapping and database table names, for servers that renamed them
     esx = {
-        -- Accounts: ESX account name to the money type it counts as (cash, bank or crypto); accounts left out are not tracked
-        accounts = { money = 'cash', bank = 'bank', black_money = 'cash' },
+        -- Accounts: ESX account name to the money type it counts as; cash, bank and crypto are part of money snapshots,
+        -- any other name (such as black_money) is reported in money changes only; accounts left out are not tracked
+        accounts = { money = 'cash', bank = 'bank', black_money = 'black_money' },
         tables = {
             characters = 'users', vehicles = 'owned_vehicles', vehiclePrices = 'vehicles',
             items = 'items', societyAccounts = 'addon_account_data',
         },
+        -- Death events: esx_ambulancejob (ESX before 1.16) sets the dead state before its matching event arrives, so a change waits this long
+        -- for it (ms), and an event counts for a death or respawn if it came within the signal time (ms)
+        deathSettleMs = 500,
+        deathSignalMs = 5000,
         -- Changed column: the users timestamp that updates with the row, so only changed rows are read; leave empty to read every row
         changedColumn = 'last_seen',
     },

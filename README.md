@@ -60,7 +60,7 @@ The agent only reads facts that already exist on your server.
 | **Combat** | Damage, deaths and explosions. Shots fired are reported by the client in aggregate and checked by the server. |
 | **Money** | Every cash and bank change with its reason, plus a snapshot of balances every 15 minutes. |
 | **Items** | Moves, uses, purchases and crafting from `ox_inventory`, plus a daily census of items. |
-| **Vehicles and medical** | Ownership and transfers from `qbx_vehicles`, vehicle ownership from the database, check-ins and revives from `qbx_medical`, and deaths and revives from `esx_death`. |
+| **Vehicles and medical** | Ownership and transfers from `qbx_vehicles`, vehicle ownership from the database, check-ins and revives from `qbx_medical`, and deaths and revives from `esx_death` (or `esx_ambulancejob` on older ESX). |
 | **Sessions** | Joins, leaves, character changes, job and gang changes, resource restarts. |
 | **Chat** | Message length and command name only. Message text is off unless you turn it on. |
 | **Logs** | Log lines from `ox_lib`'s logger when it is pointed at Atlas (see [Logs](#logs)), plus script errors and warnings from the server console. |
@@ -187,7 +187,9 @@ If Atlas cannot be reached, events are kept on disk and sent in order once the c
 | `placeRadius` | per kind | Size in metres of each kind of place: `shop`, `garage`, `hospital`, `police`, `bank` and `custom`. |
 | `qbox.tables` | `players`, `player_vehicles`, `properties` | Qbox table names, for servers that renamed them. |
 | `esx.tables` | `users`, `owned_vehicles`, `vehicles`, `items`, `addon_account_data` | ESX table names, for servers that renamed them. |
-| `esx.accounts` | `money` and `black_money` as cash, `bank` as bank | Which ESX accounts count as cash, bank or crypto. Accounts left out are not tracked. |
+| `esx.accounts` | `money` as cash, `bank` as bank, `black_money` as its own type | Money type per ESX account. Cash, bank and crypto are included in money snapshots; any other name is reported in money changes only. Accounts left out are not tracked. |
+| `esx.deathSettleMs` | `500` | Older ESX: how long to wait after the dead state changes for the matching client event. |
+| `esx.deathSignalMs` | `5000` | Older ESX: how recent a client death or respawn event must be to count. |
 | `esx.changedColumn` | `last_seen` | `users` column that updates when a row changes, used to read only changed rows. |
 | `consoleWords` | `error`, `failed`, `warning`, `hitch` | Words that make a console line worth sending, in any letter case. |
 | `consoleMaxLines` | `100` | Most console lines sent per second. |

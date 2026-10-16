@@ -68,7 +68,7 @@ describe('esx money reader', function()
             { identifier = 'char1:c', accounts = '{"bank":"7"}' },
         }
         local rows, cursor, got = data().money.page(nil, nil, 2)
-        expect(rows).toEqual({ { 'char1:a', 15, 200, 0 }, { 'char1:b', 0, 0, 0 }, { 'char1:c', 0, 7, 0 } })
+        expect(rows).toEqual({ { 'char1:a', 10, 200, 0 }, { 'char1:b', 0, 0, 0 }, { 'char1:c', 0, 7, 0 } })
         expect(cursor).toBe('char1:c')
         expect(got).toBe(3)
         fx.teardown()
@@ -79,6 +79,14 @@ describe('esx money reader', function()
         state.rows = { { identifier = 'a', accounts = 'not json' }, { identifier = 'b', accounts = nil }, { identifier = 'c', accounts = '[1]' } }
         local rows = data().money.page(nil, nil, 5)
         expect(rows).toEqual({ { 'a', 0, 0, 0 }, { 'b', 0, 0, 0 }, { 'c', 0, 0, 0 } })
+        fx.teardown()
+    end)
+
+    it('adds black money to cash only when the config maps it there', function()
+        boot()
+        AtlasConfig.esx.accounts.black_money = 'cash'
+        state.rows = { { identifier = 'a', accounts = '{"money":10,"black_money":5}' } }
+        expect(data().money.page(nil, nil, 5)).toEqual({ { 'a', 15, 0, 0 } })
         fx.teardown()
     end)
 
