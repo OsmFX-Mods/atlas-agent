@@ -384,6 +384,22 @@ describe('core heartbeat', function()
         fx.teardown()
     end)
 
+    it('reports the mean emit cost since the last heartbeat', function()
+        boot()
+        fx.tick()
+        local st = Atlas.stats
+        st.emits, st.emitNs = st.emits + 1000000, st.emitNs + 5000000000 -- a million emits at 5 us each
+        fx.advance(AtlasConfig.heartbeatMs + 100)
+        Atlas.jsReady = true
+        Atlas.flush()
+        local hb
+        for _, ev in ipairs(fx.triggered('atlas:internal:batch')[1][1]) do
+            if ev.type == 'agent.heartbeat' then hb = ev end
+        end
+        expect(hb.data.emit_us_interval > 4.9 and hb.data.emit_us_interval < 5.1).toBe(true)
+        fx.teardown()
+    end)
+
     it('reports the console state in the heartbeat', function()
         boot()
         Atlas.consoleState = 'unsupported'
