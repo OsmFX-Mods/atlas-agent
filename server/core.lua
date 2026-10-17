@@ -388,7 +388,9 @@ end
 
 -- Heartbeat: sent on an interval; transport.js adds its queue size and drop counts.
 -- Logs: the console capture state comes from console.lua.
+-- emit_us_interval: the mean cost of an emit since the last heartbeat, so one slow emit shows in one heartbeat only.
 CreateThread(function()
+    local seenEmits, seenNs = 0, 0
     while true do
         Wait(cfg.heartbeatMs)
         if Atlas.enabled then
@@ -397,12 +399,16 @@ CreateThread(function()
             table.sort(adapters)
             local drops = {}
             for k, v in pairs(Atlas.drops) do drops[k] = v end
+            local st = Atlas.stats
+            local emits, ns = st.emits - seenEmits, st.emitNs - seenNs
+            seenEmits, seenNs = st.emits, st.emitNs
             Atlas.emit('agent.heartbeat', {
                 version = Atlas.version,
                 adapters = adapters,
                 queue = n,
                 drops = drops,
                 emit_us_avg = math.floor(Atlas.stats.emitEmaUs * 100 + 0.5) / 100,
+                emit_us_interval = emits > 0 and math.floor(ns / emits / 10 + 0.5) / 100 or 0,
                 players = #Atlas.playerList,
                 logs = { console = Atlas.consoleState },
             })
