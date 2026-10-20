@@ -221,7 +221,7 @@ node tests/transport.test.js    # transport: real local HTTP server, spool, retr
 lua5.4 tests/run.lua            # pure modules, plus server scripts run against a FiveM stub (tests/fivem.lua)
 ```
 
-Releases are built by GitHub Actions. To publish one, run the **Release** workflow from the Actions tab and enter a version (for example `0.2.0`), or push a tag such as `v0.2.0`. The workflow runs the tests, stamps the version into `fxmanifest.lua`, and attaches `atlas-agent-v0.2.0.zip` (containing a single `atlas-agent` folder) and its SHA-256 checksum to a GitHub release.
+Releases are built by GitHub Actions. To publish one, run the **Release** workflow from the Actions tab and enter a version (for example `0.2.0`), or push a tag such as `v0.2.0`. The workflow runs the tests, stamps the version into `fxmanifest.lua`, and attaches `atlas-agent-v0.2.0.zip` (containing a single `atlas-agent` folder) and its SHA-256 checksum to a GitHub release. It also attaches a copy named `atlas-agent.zip`, so `releases/latest/download/atlas-agent.zip` always points at the newest release.
 
 ## Links
 

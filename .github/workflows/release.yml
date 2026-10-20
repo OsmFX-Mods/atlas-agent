@@ -112,6 +112,8 @@ jobs:
           unzip -Z1 "${ASSET}" | grep -qx "${RESOURCE}/fxmanifest.lua"
           sha256sum "${ASSET}" > "${ASSET}.sha256"
           cat "${ASSET}.sha256"
+          # Fixed name: a copy without the version, so the "latest" download link always works
+          cp "${ASSET}" "${RESOURCE}.zip"
 
       - name: Write release notes
         env:
@@ -155,3 +157,4 @@ jobs:
           files: |
             ${{ steps.ver.outputs.zip }}
             ${{ steps.ver.outputs.zip }}.sha256
+            ${{ env.RESOURCE }}.zip
