@@ -12,7 +12,7 @@ local function boot(resources)
             return { GetPlayerFromId = function(src) return state.players[src] end }
         end } },
         load = { 'server/db.lua', 'server/adapters/detect.lua', 'server/sources.lua', 'server/framework.lua',
-            'server/characters.lua', 'server/money.lua', 'server/adapters/esx_data.lua', 'server/adapters/esx.lua',
+            'server/characters.lua', 'server/staff.lua', 'server/money.lua', 'server/adapters/esx_data.lua', 'server/adapters/esx.lua',
             'server/adapters/esx_death.lua', 'server/adapters/esx_ambulance.lua' },
     })
     fx.set('Player', function(src) return { state = { isDead = state.dead[src] } } end)

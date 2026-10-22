@@ -92,7 +92,7 @@ describe('qbx_ambulancejob check-in hook', function()
                 removeHooks = function() end,
                 registerHook = function(_, name, fn) registered[name] = fn end,
             } },
-            load = { 'server/adapters/detect.lua', 'server/characters.lua', 'server/adapters/qbx_medical.lua' },
+            load = { 'server/adapters/detect.lua', 'server/characters.lua', 'server/staff.lua', 'server/adapters/qbx_medical.lua' },
         })
         fx.advance(200)
         fx.addPlayer(4, {})
@@ -118,8 +118,8 @@ describe('Renewed-Banking accounts', function()
             } },
             load = {
                 'server/db.lua', 'server/sampler.lua', 'server/adapters/detect.lua', 'server/sources.lua',
-                'server/framework.lua', 'server/characters.lua', 'server/money.lua', 'server/adapters/natives.lua',
-                'server/adapters/qbox_data.lua', 'server/adapters/qbox.lua', 'server/adapters/renewed_banking.lua',
+                'server/framework.lua', 'server/characters.lua', 'server/staff.lua', 'server/money.lua', 'server/adapters/natives.lua',
+                'server/adapters/qb_common.lua', 'server/adapters/qbox_data.lua', 'server/adapters/qbox.lua', 'server/adapters/renewed_banking.lua',
             },
         })
         fx.advance(200)

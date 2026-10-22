@@ -28,6 +28,7 @@ describe('manifest load order', function()
         expect(Atlas.characters ~= nil).toBe(true)
         expect(Atlas.frameworkData.qbox ~= nil).toBe(true)
         expect(Atlas.frameworkData.esx ~= nil).toBe(true)
+        expect(Atlas.frameworkData.qbcore ~= nil).toBe(true)
         fx.teardown()
     end)
 
@@ -35,7 +36,7 @@ describe('manifest load order', function()
         fx.boot({ convars = { ['atlas:token'] = 'atl_live_x' }, load = loadOrder() })
         local names = {}
         for _, def in ipairs(Atlas.adapterList()) do names[def.name] = true end
-        for _, name in ipairs({ 'natives', 'qbox', 'esx', 'esx_death', 'esx_ambulancejob', 'ox_inventory', 'qbx_vehicles', 'qbx_medical', 'renewed_banking' }) do
+        for _, name in ipairs({ 'natives', 'qbox', 'qbcore', 'qb_ambulancejob', 'qb_inventory', 'esx', 'esx_death', 'esx_ambulancejob', 'ox_inventory', 'qbx_vehicles', 'qbx_medical', 'renewed_banking' }) do
             expect(names[name]).toBe(true)
         end
         expect(#Atlas.sourceResources('places') > 0 or next(Atlas.sourceResources('places')) ~= nil).toBe(true)
@@ -47,7 +48,7 @@ describe('manifest load order', function()
         local listed = {}
         for _, path in ipairs(manifestScripts()) do listed[path] = true end
         for _, path in ipairs({
-            'server/sources.lua', 'server/framework.lua', 'server/characters.lua', 'server/money.lua',
+            'server/sources.lua', 'server/framework.lua', 'server/characters.lua', 'server/staff.lua', 'server/money.lua',
             'server/adapters/qbox_data.lua', 'server/adapters/esx.lua', 'server/adapters/esx_data.lua',
             'server/adapters/esx_death.lua', 'server/adapters/ox_inventory_data.lua',
         }) do

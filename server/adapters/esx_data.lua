@@ -36,51 +36,131 @@ local function page(sql, params, key, map)
     return out, rows[#rows] and rows[#rows][key], #rows
 end
 
--- Changed rows: users carries a timestamp that updates with the row only on some setups, so it is checked once per run.
-local changed -- changed: quoted column name when changed rows can be found, false when not, nil until checked
+-- Columns: what the users table offers differs between setups, so it is looked up once and kept.
+local columns -- columns: { changed, created = quoted column name or false, names = true when first and last name columns exist }, nil until read
 
-local function checkChanged()
-    if changed ~= nil then return end
-    local column = common.sqlName(cfg.esx.changedColumn)
-    if not column then changed = false return end
-    local extra, err = db.scalar(
-        'SELECT EXTRA FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ?',
-        { cfg.esx.tables.characters, cfg.esx.changedColumn })
-    if err then return end -- error: asked again on the next run
-    changed = type(extra) == 'string' and extra:lower():find('on update', 1, true) ~= nil and column or false
+--- Columns: the users columns Atlas can use; nil after a database error, so the next call asks again.
+local function checkColumns()
+    if columns then return columns end
+    local rows = db.query('SELECT COLUMN_NAME AS c, EXTRA AS e FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?',
+        { cfg.esx.tables.characters })
+    if type(rows) ~= 'table' then return nil end
+    local extra = {} -- extra: lower-case column name to its lower-case EXTRA text
+    for i = 1, #rows do
+        if type(rows[i].c) == 'string' then extra[rows[i].c:lower()] = type(rows[i].e) == 'string' and rows[i].e:lower() or '' end
+    end
+    --- Column: the configured column when it exists and updates with the row (or never does, when onUpdate is false).
+    local function column(name, onUpdate)
+        local quoted = common.sqlName(name)
+        local e = quoted and extra[name:lower()]
+        if not e then return false end
+        return (e:find('on update', 1, true) ~= nil) == onUpdate and quoted or false
+    end
+    columns = {
+        changed = column(cfg.esx.changedColumn, true),
+        created = column(cfg.esx.createdColumn, false),
+        names = extra.firstname ~= nil and extra.lastname ~= nil,
+    }
+    Atlas.log('esx characters are keyed by %s', columns.created and 'identifier and creation time'
+        or 'identifier only (users has no fixed creation time column)')
+    return columns
+end
+
+-- Character keys: ESX names a character after its slot (char1:<license>) and gives the name to the next character made in that slot
+-- once it is deleted. Characters created from KEYS_FROM on are keyed by identifier and creation time, so a new character never takes
+-- over the history of a deleted one; older characters keep the plain identifier their history was recorded under.
+local KEYS_FROM = 1761177600 -- KEYS_FROM: 2026-10-23 00:00 UTC, the first creation time that gets a timed key
+
+--- Key: SQL for a character's key; prefix names the users table in a join.
+local function keySql(prefix)
+    prefix = prefix or ''
+    local id = prefix .. 'identifier'
+    local created = columns and columns.created
+    if not created then return id end
+    local at = prefix .. created
+    return ("CASE WHEN %s >= FROM_UNIXTIME(%d) THEN CONCAT(%s, '#', FLOOR(UNIX_TIMESTAMP(%s))) ELSE %s END"):format(at, KEYS_FROM, id, at, id)
 end
 
 local function changedFilter(since)
-    return since and (changed .. ' >= FROM_UNIXTIME(?) AND') or ''
+    return since and (columns.changed .. ' >= FROM_UNIXTIME(?) AND') or ''
 end
 
 local function count(since)
     local t = tbl('characters')
     if not t then return nil end
-    return db.scalar('SELECT COUNT(*) FROM ' .. t .. (since and (' WHERE ' .. changed .. ' >= FROM_UNIXTIME(?)') or ''),
+    return db.scalar('SELECT COUNT(*) FROM ' .. t .. (since and (' WHERE ' .. columns.changed .. ' >= FROM_UNIXTIME(?)') or ''),
         since and { since } or {})
+end
+
+local keys = {}
+
+--- Timed: whether characters get timed keys (true), plain identifiers (false), or nil while the database cannot tell.
+--- Known only: answers from what was already read, without a query, so an event handler never waits on the database.
+function keys.timed(knownOnly)
+    local c = knownOnly and columns or checkColumns()
+    if not c then return nil end
+    return c.created ~= false
+end
+
+--- Current: the key of the character in an identifier's slot now; false when the slot is empty, nil after a database error.
+function keys.current(identifier)
+    local t = tbl('characters')
+    if not t or not checkColumns() then return nil end
+    local key, err = db.scalar(('SELECT %s FROM %s WHERE identifier = ?'):format(keySql(), t), { identifier })
+    if err then return nil end
+    return key ~= nil and tostring(key) or false
+end
+
+--- Key: the key of one character; the plain identifier when keys are not timed or the row is missing, nil after a database error.
+function keys.of(identifier)
+    local timed = keys.timed()
+    if not timed then return timed == false and identifier or nil end
+    local key = keys.current(identifier)
+    if key == nil then return nil end
+    return key or identifier
+end
+
+--- Account: the characters of one account as identifier to { key, name }; nil after a database error.
+--- @param license string the account's identifier without its type, as ESX stores it after the slot prefix
+function keys.account(license)
+    if type(license) ~= 'string' or not license:find('^[%w]+$') then return nil end
+    local c = checkColumns()
+    local t = tbl('characters')
+    if not c or not t then return nil end
+    local name = c.names and ", CONCAT_WS(' ', firstname, lastname) AS n" or ''
+    local rows = db.query(('SELECT identifier, %s AS k%s FROM %s WHERE identifier = ? OR identifier LIKE ?'):format(keySql(), name, t),
+        { license, '%:' .. license })
+    if type(rows) ~= 'table' then return nil end
+    local out = {}
+    for i = 1, #rows do
+        local r = rows[i]
+        if type(r.identifier) == 'string' then
+            out[r.identifier] = { key = tostring(r.k or r.identifier), name = type(r.n) == 'string' and r.n:match('^%s*(.-)%s*$') or '' }
+        end
+    end
+    return out
 end
 
 -- Money: balances from the users table.
 local money = {}
 
 function money.init()
-    checkChanged()
-    money.delta = changed ~= false and changed ~= nil
+    local c = checkColumns()
+    money.delta = c ~= nil and c.changed ~= false
 end
 
 money.count = count
 
 function money.page(since, cursor, per)
     local t = tbl('characters')
-    if not t then return nil end
+    if not t or not checkColumns() then return nil end
     local params = since and { since } or {}
     params[#params + 1] = cursor or ''
-    return page(('SELECT identifier, accounts FROM %s WHERE %s identifier > ? ORDER BY identifier LIMIT %d'):format(
-        t, changedFilter(since), per), params, 'identifier', function(r)
+    return page(('SELECT identifier, %s AS k, accounts FROM %s WHERE %s identifier > ? ORDER BY identifier LIMIT %d'):format(
+        keySql(), t, changedFilter(since), per), params, 'identifier', function(r)
         local ok, accounts = pcall(json.decode, r.accounts or '')
         local s = slots(ok and type(accounts) == 'table' and accounts or {})
-        return { r.identifier, s.cash, s.bank, s.crypto }
+        return { r.k, s.cash, s.bank, s.crypto }
     end)
 end
 
@@ -91,16 +171,17 @@ players.count = count
 
 function players.page(since, cursor, per)
     local t = tbl('characters')
-    if not t then return nil end
+    if not t or not checkColumns() then return nil end
     local params = since and { since } or {}
     params[#params + 1] = cursor or ''
-    return page(('SELECT identifier, inventory FROM %s WHERE %s identifier > ? ORDER BY identifier LIMIT %d'):format(
-        t, changedFilter(since), per), params, 'identifier', function(r)
-        return { r.identifier, AtlasLib.inventory.census(r.inventory, json) }
+    return page(('SELECT identifier, %s AS k, inventory FROM %s WHERE %s identifier > ? ORDER BY identifier LIMIT %d'):format(
+        keySql(), t, changedFilter(since), per), params, 'identifier', function(r)
+        return { r.k, AtlasLib.inventory.census(r.inventory, json) }
     end)
 end
 
 -- Vehicles: owner, model hash and plate hash per owned vehicle; the plate is the table's key.
+-- Owner: a character's key when keys are timed, read through the users table; owners that are not characters stay as they are.
 local vehicles = { owned = {} }
 
 --- Model: the model hash inside a vehicle's saved properties; a model name is hashed, a missing one is 0.
@@ -119,13 +200,20 @@ function vehicles.owned.count()
 end
 
 function vehicles.owned.page(cursor, per)
-    local t = tbl('vehicles')
-    if not t then return nil end
-    return page(('SELECT owner, plate, vehicle FROM %s WHERE owner IS NOT NULL AND plate > ? ORDER BY plate LIMIT %d'):format(t, per),
-        { cursor or '' }, 'plate', function(r)
-            local plate = common.plate(r.plate)
-            return { r.owner, modelOf(r.vehicle), plate and common.u32(GetHashKey(plate)) or 0 }
-        end)
+    local t, users = tbl('vehicles'), tbl('characters')
+    local c = checkColumns()
+    if not t or not users or not c then return nil end
+    local sql
+    if c.created then
+        sql = ('SELECT v.plate, v.vehicle, COALESCE(%s, v.owner) AS k FROM %s v LEFT JOIN %s u ON u.identifier = v.owner WHERE v.owner IS NOT NULL AND v.plate > ? ORDER BY v.plate LIMIT %d'):format(
+            keySql('u.'), t, users, per)
+    else
+        sql = ('SELECT plate, vehicle, owner AS k FROM %s WHERE owner IS NOT NULL AND plate > ? ORDER BY plate LIMIT %d'):format(t, per)
+    end
+    return page(sql, { cursor or '' }, 'plate', function(r)
+        local plate = common.plate(r.plate)
+        return { r.k, modelOf(r.vehicle), plate and common.u32(GetHashKey(plate)) or 0 }
+    end)
 end
 
 -- Shared object: fetched once and kept, since each fetch copies every ESX function across resources.
@@ -146,10 +234,11 @@ end)
 Atlas.frameworkData.esx = {
     slots = slots, -- slots: used by the adapter to turn live account balances into money types
     shared = shared, -- shared: the cached ESX object, also used by the adapter
+    keys = keys, -- keys: character keys, used by the adapter for live characters and deletions
     money = money,
     census = function()
-        checkChanged()
-        players.delta = changed ~= false and changed ~= nil
+        local c = checkColumns()
+        players.delta = c ~= nil and c.changed ~= false
         return { players }
     end,
     vehicles = vehicles,

@@ -25,7 +25,7 @@ local function newPlayer(src, over)
 end
 
 local function boot(over)
-    state = { players = {}, jobs = { police = {}, ambulance = {} }, dead = {}, objectError = false, lookups = 0, objectCalls = 0 }
+    state = { players = {}, jobs = { police = {}, ambulance = {} }, dead = {}, groups = {}, objectError = false, lookups = 0, objectCalls = 0 }
     local ESX = {
         GetPlayerFromId = function(src)
             state.lookups = state.lookups + 1
@@ -51,11 +51,11 @@ local function boot(over)
         } },
         load = {
             'server/db.lua', 'server/adapters/detect.lua', 'server/sources.lua', 'server/framework.lua',
-            'server/characters.lua', 'server/money.lua', 'server/adapters/esx_data.lua', 'server/adapters/esx.lua',
+            'server/characters.lua', 'server/staff.lua', 'server/money.lua', 'server/adapters/esx_data.lua', 'server/adapters/esx.lua',
             'server/adapters/esx_death.lua',
         },
     })
-    fx.set('Player', function(src) return { state = { isDead = state.dead[src] } } end)
+    fx.set('Player', function(src) return { state = { isDead = state.dead[src], group = state.groups[src] } } end)
     state.db = { rows = {}, scalar = nil }
     Atlas.db.available = function() return true end
     Atlas.db.query = function() return state.db.rows end
@@ -120,7 +120,7 @@ describe('esx adapter attach', function()
             convars = { ['atlas:token'] = 'atl_live_x', ['atlas:framework'] = 'qbox' }, resources = { es_extended = 'started' },
             provided = { es_extended = { getSharedObject = function() return {} end } },
             load = { 'server/db.lua', 'server/adapters/detect.lua', 'server/sources.lua', 'server/framework.lua',
-                'server/characters.lua', 'server/money.lua', 'server/adapters/esx_data.lua', 'server/adapters/esx.lua' },
+                'server/characters.lua', 'server/staff.lua', 'server/money.lua', 'server/adapters/esx_data.lua', 'server/adapters/esx.lua' },
         })
         fx.advance(200)
         expect(Atlas.adapterActive('esx')).toBe(false)
@@ -136,7 +136,7 @@ describe('esx adapter attach', function()
                 return { GetPlayerFromId = function(src) return state.players[src] end }
             end } },
             load = { 'server/db.lua', 'server/adapters/detect.lua', 'server/sources.lua', 'server/framework.lua',
-                'server/characters.lua', 'server/money.lua', 'server/adapters/esx_data.lua', 'server/adapters/esx.lua' },
+                'server/characters.lua', 'server/staff.lua', 'server/money.lua', 'server/adapters/esx_data.lua', 'server/adapters/esx.lua' },
         })
         state = { players = {}, dead = {} }
         fx.addPlayer(4, { ped = { x = 1.0, y = 1.0, z = 1.0 } })
@@ -574,7 +574,7 @@ describe('esx death', function()
                 return { GetPlayerFromId = function(src) return state.players[src] end }
             end } },
             load = { 'server/db.lua', 'server/adapters/detect.lua', 'server/sources.lua', 'server/framework.lua',
-                'server/characters.lua', 'server/money.lua', 'server/adapters/esx_data.lua', 'server/adapters/esx.lua',
+                'server/characters.lua', 'server/staff.lua', 'server/money.lua', 'server/adapters/esx_data.lua', 'server/adapters/esx.lua',
                 'server/adapters/esx_death.lua' },
         })
         state = { players = {}, dead = {} }
@@ -637,7 +637,7 @@ describe('esx death', function()
     it('does nothing while ESX is not the framework', function()
         fx.boot({
             convars = { ['atlas:token'] = 'atl_live_x' }, resources = { esx_death = 'started' },
-            load = { 'server/adapters/detect.lua', 'server/sources.lua', 'server/framework.lua', 'server/characters.lua',
+            load = { 'server/adapters/detect.lua', 'server/sources.lua', 'server/framework.lua', 'server/characters.lua', 'server/staff.lua',
                 'server/adapters/esx_death.lua' },
         })
         fx.advance(200)
@@ -646,6 +646,141 @@ describe('esx death', function()
         Atlas.characters.load(4, { char = 'x' })
         death(4, true, 'death')
         expect(#events('combat.death')).toBe(0)
+        fx.teardown()
+    end)
+end)
+
+describe('esx character keys and deletion', function()
+    local KEY2 = 'char2:lic4#1761200000'
+
+    --- Timed: a database whose users table has created_at; keys maps identifiers to keys, a missing entry is an empty slot.
+    local function timed(keys)
+        state.keys = keys
+        Atlas.db.query = function(sql, params)
+            if sql:find('information_schema', 1, true) then
+                return { { c = 'created_at', e = 'DEFAULT_GENERATED' }, { c = 'firstname', e = '' }, { c = 'lastname', e = '' } }
+            end
+            if state.keysErr then return nil, 'timeout' end
+            local out = {}
+            if not params then return out end
+            for id, k in pairs(state.keys) do
+                if id:sub(-#params[1] - 1) == ':' .. params[1] then out[#out + 1] = { identifier = id, k = k, n = 'Ann Lee' } end
+            end
+            return out
+        end
+        Atlas.db.scalar = function(_, params)
+            if state.keysErr then return nil, 'timeout' end
+            return state.keys[params[1]]
+        end
+    end
+
+    it('starts a character once its key is read and sends the money changes made meanwhile under it', function()
+        boot(function() timed({ ['char1:lic4'] = 'char1:lic4#1761200000' }) end)
+        fx.addPlayer(4, {})
+        Atlas.ensurePlayer(4)
+        local x = newPlayer(4, { identifier = 'char1:lic4' })
+        TriggerEvent('esx:playerLoaded', 4, x, true)
+        x.accounts.bank = 600
+        TriggerEvent('esx:addAccountMoney', 4, 'bank', 100, 'welcome')
+        expect(#events('session.char_start')).toBe(0)
+        fx.advance(100)
+        local start = events('session.char_start')[1]
+        expect(start.data.char).toBe('char1:lic4#1761200000')
+        expect(start.data.is_new_char).toBe(true)
+        local m = events('money.change')[1]
+        expect(m.data.delta).toBe(100)
+        expect(m.data.balance_after).toBe(600)
+        expect(Atlas.players[4].char).toBe('char1:lic4#1761200000')
+        fx.teardown()
+    end)
+
+    it('falls back to the plain identifier after the configured tries fail', function()
+        boot(function() timed({}) end)
+        state.keysErr = true
+        fx.addPlayer(4, {})
+        Atlas.ensurePlayer(4)
+        TriggerEvent('esx:playerLoaded', 4, newPlayer(4, { identifier = 'char1:lic4' }), false)
+        fx.advance(AtlasConfig.esx.keyTries * 1000 + 100)
+        expect(events('session.char_start')[1].data.char).toBe('char1:lic4')
+        expect(#fx.printed('could not read the key of char1:lic4')).toBe(1)
+        fx.teardown()
+    end)
+
+    it('drops a pending load when the player logs out before the key is read', function()
+        boot(function() timed({ ['char1:lic4'] = 'char1:lic4#1761200000' }) end)
+        fx.addPlayer(4, {})
+        Atlas.ensurePlayer(4)
+        TriggerEvent('esx:playerLoaded', 4, newPlayer(4, { identifier = 'char1:lic4' }), false)
+        TriggerEvent('esx:playerDropped', 4, 'esx_player_logout')
+        fx.advance(100)
+        expect(#events('session.char_start')).toBe(0)
+        fx.teardown()
+    end)
+
+    local function joined(keys)
+        boot(function()
+            fx.addPlayer(4, { identifiers = { 'license:lic4' } })
+            timed(keys)
+        end)
+        Atlas.runJoin(Atlas.ensurePlayer(4))
+        fx.advance(100)
+    end
+
+    it('emits character.delete with the old key once the slot is empty', function()
+        joined({ ['char1:lic4'] = 'char1:lic4', ['char2:lic4'] = KEY2 })
+        fx.net('esx_multicharacter:DeleteCharacter', 4, 2)
+        state.keys['char2:lic4'] = nil
+        fx.advance(AtlasConfig.deleteCheckMs + 100)
+        local ev = events('character.delete')
+        expect(#ev).toBe(1)
+        expect(ev[1].data).toEqual({ char = KEY2, char_name = 'Ann Lee' })
+        expect(ev[1].src).toBe(4)
+        fx.teardown()
+    end)
+
+    it('listens on the xLib and ox_lib callback events and emits nothing while the character is still there', function()
+        joined({ ['char2:lic4'] = KEY2 })
+        fx.net('__xLib_cb_esx_multicharacter:deleteCharacter', 4, 'esx_multicharacter', 'k1', 2)
+        fx.advance(AtlasConfig.deleteCheckMs + 100)
+        expect(#events('character.delete')).toBe(0)
+        fx.net('__ox_cb_esx_multicharacter:deleteCharacter', 4, 'esx_multicharacter', 'k2', '2')
+        state.keys['char2:lic4'] = nil
+        fx.advance(AtlasConfig.deleteCheckMs + 100)
+        expect(#events('character.delete')).toBe(1)
+        fx.teardown()
+    end)
+
+    it('ignores slots the account does not hold and a failed check', function()
+        joined({ ['char2:lic4'] = KEY2 })
+        fx.net('esx_multicharacter:DeleteCharacter', 4, 3)
+        fx.net('esx_multicharacter:DeleteCharacter', 4, 'x')
+        state.keysErr = true
+        fx.net('esx_multicharacter:DeleteCharacter', 4, 2)
+        fx.advance(AtlasConfig.deleteCheckMs + 100)
+        expect(#events('character.delete')).toBe(0)
+        fx.teardown()
+    end)
+end)
+
+describe('esx staff ranks', function()
+    it('reads the group from the state bag at character start and again after /setgroup', function()
+        boot()
+        Atlas.db.available = function() return false end
+        state.groups[4] = 'admin'
+        login(4)
+        login(5)
+        state.groups[5] = 'mod'
+        fx.stateBag(5, 'group', 'mod')
+        fx.advance(50)
+        state.groups[4] = 'user'
+        fx.stateBag(4, 'group', 'user')
+        fx.advance(50)
+        local ev = events('player.staff')
+        expect(#ev).toBe(3)
+        expect(ev[1].data.role).toBe('admin')
+        expect(ev[2].data.role).toBe('mod')
+        expect(ev[2].actor.char).toBe('char1:abc5')
+        expect(ev[3].data.role).toBeNil()
         fx.teardown()
     end)
 end)

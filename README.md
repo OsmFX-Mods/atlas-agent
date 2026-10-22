@@ -16,7 +16,7 @@
 
 This repository is the **Atlas agent**, the small resource you install on your game server. It watches what happens in your city and sends it to your Atlas dashboard. The heavy lifting runs on the Atlas side, so the agent stays light.
 
-> **Early access.** Atlas is free and open by invitation, for Qbox and ESX servers with 5 to 25 players. The agent needs a token from an Atlas dashboard to do anything, so [request access on the Atlas page](https://osmfxmods.com/atlas) first.
+> **Early access.** Atlas is free and open by invitation, for Qbox, QBCore and ESX servers with 5 to 25 players. The agent needs a token from an Atlas dashboard to do anything, so [request access on the Atlas page](https://osmfxmods.com/atlas) first.
 
 ---
 
@@ -59,9 +59,10 @@ The agent only reads facts that already exist on your server.
 | **Movement** | Player positions, sampled every 3 seconds (every second near a fight). A player who stands still is reported with a still marker every 30 seconds instead of a stream of identical positions. |
 | **Combat** | Damage, deaths and explosions. Shots fired are reported by the client in aggregate and checked by the server. |
 | **Money** | Every cash and bank change with its reason, plus a snapshot of balances every 15 minutes. |
-| **Items** | Moves, uses, purchases and crafting from `ox_inventory`, plus a daily census of items. |
-| **Vehicles and medical** | Ownership and transfers from `qbx_vehicles`, vehicle ownership from the database, check-ins and revives from `qbx_medical`, and deaths and revives from `esx_death` (or `esx_ambulancejob` on older ESX). |
-| **Sessions** | Joins, leaves, character changes, job and gang changes, resource restarts. |
+| **Items** | Moves, uses, purchases and crafting from `ox_inventory`, moves, gives, uses and purchases from `qb-inventory`, plus a daily census of items. |
+| **Vehicles and medical** | Ownership and transfers from `qbx_vehicles`, vehicle ownership from the database, check-ins and revives from `qbx_medical` and `qb-ambulancejob`, and deaths and revives from `esx_death` (or `esx_ambulancejob` on older ESX). |
+| **Sessions** | Joins, leaves, character changes, character creation and deletion, job and gang changes, resource restarts. |
+| **Staff** | Each player's staff rank (ACE permissions, or the ESX group), actions from `qbx_adminmenu` and `qb-adminmenu`, and txAdmin warnings, kicks and bans. |
 | **Chat** | Message length and command name only. Message text is off unless you turn it on. |
 | **Logs** | Log lines from `ox_lib`'s logger when it is pointed at Atlas (see [Logs](#logs)), plus script errors and warnings from the server console. |
 
@@ -77,11 +78,11 @@ The agent only reads facts that already exist on your server.
 
 - A FiveM server with **OneSync** enabled
 - An Atlas dashboard, and a server token from it ([request access](https://osmfxmods.com/atlas))
-- A framework: [Qbox](https://github.com/Qbox-project) (`qbx_core`) or [ESX Legacy](https://github.com/esx-framework/esx_core) (`es_extended`). Optionally [`ox_inventory`](https://github.com/overextended/ox_inventory) for items; ESX also works with its built-in inventory. Without a framework the agent still sends sessions, positions and combat, and uses the player account as the character.
+- A framework: [Qbox](https://github.com/Qbox-project) (`qbx_core`), [QBCore](https://github.com/qbcore-framework) (`qb-core`) or [ESX Legacy](https://github.com/esx-framework/esx_core) (`es_extended`). Optionally [`ox_inventory`](https://github.com/overextended/ox_inventory) for items on Qbox and ESX; QBCore uses `qb-inventory`, and ESX also works with its built-in inventory. Without a framework the agent still sends sessions, positions and combat, and uses the player account as the character.
 - [`oxmysql`](https://github.com/overextended/oxmysql) for the money, item and vehicle snapshots. Optional.
-- [`qbx_vehicles`](https://github.com/Qbox-project/qbx_vehicles), [`qbx_medical`](https://github.com/Qbox-project/qbx_medical) and [`Renewed-Banking`](https://github.com/Renewed-Scripts/Renewed-Banking) add vehicles, medical and bank accounts when present.
+- [`qbx_vehicles`](https://github.com/Qbox-project/qbx_vehicles), [`qbx_medical`](https://github.com/Qbox-project/qbx_medical), `qb-ambulancejob`, `qb-banking` and [`Renewed-Banking`](https://github.com/Renewed-Scripts/Renewed-Banking) add vehicles, medical and bank accounts when present.
 
-Resources can start in any order. The agent attaches to each one as it starts. If both Qbox and ESX are installed, the first to start is used; see [Frameworks](docs/frameworks.md) to choose.
+Resources can start in any order. The agent attaches to each one as it starts. If two frameworks are installed, the first to start is used; see [Frameworks](docs/frameworks.md) to choose.
 
 ### Steps
 
@@ -154,11 +155,12 @@ Everything has a sensible default. The common settings are convars: add them to 
 | `atlas:combat_boost` | `1` | Sample more often near a fight. |
 | `atlas:client_combat` | `1` | Count shots fired on the client and report them in aggregate. |
 | `atlas:chat_content` | `0` | Send chat text. Off means length and command name only. |
-| `atlas:framework` | `auto` | Which framework to read: `auto`, `qbox`, `esx` or `none`. See [Frameworks](docs/frameworks.md). |
+| `atlas:framework` | `auto` | Which framework to read: `auto`, `qbox`, `qbcore`, `esx` or `none`. See [Frameworks](docs/frameworks.md). |
 | `atlas:snapshots` | `1` | Money, account and item snapshots from the database (needs `oxmysql`). |
 | `atlas:census_hour` | `5` | Hour of day (server time) for the daily item and vehicle census. |
 | `atlas:place_visits` | `1` | Record shop and stash visits as places. |
 | `atlas:ox_createitem` | `0` | Record every `ox_inventory` item creation. Noisy, so off by default. |
+| `atlas:qb_createitem` | `0` | Record every item a script adds through `qb-inventory`. Noisy, so off by default. |
 | `atlas:census_full_weekday` | `0` | Weekday of the full item census, 0 for Sunday. Other days send changes only. |
 | `atlas:spool_mb` | `200` | Disk space for events kept while Atlas is unreachable. |
 | `atlas:console` | `1` | Capture script errors and warnings from the server console. |
@@ -184,6 +186,8 @@ If Atlas cannot be reached, events are kept on disk and sent in order once the c
 | `moneyFullEveryDays` | `7` | Days between full money snapshots. Other runs send changes only. |
 | `moneyFullEveryMin` | `60` | Minutes between full money snapshots on a framework that cannot list changed rows. |
 | `censusFullMaxDays` | `8` | A full item census also runs when the last one is older than this. |
+| `deleteCheckMs` | `3000` | How long to wait after a character delete request before checking it is gone. |
+| `staffAces` | `god`, `admin`, `mod`, `command` (as admin) | ACE permissions that make a player staff and the rank each means, highest first. ESX uses the player's group instead. |
 | `placeRadius` | per kind | Size in metres of each kind of place: `shop`, `garage`, `hospital`, `police`, `bank` and `custom`. |
 | `qbox.tables` | `players`, `player_vehicles`, `properties` | Qbox table names, for servers that renamed them. |
 | `esx.tables` | `users`, `owned_vehicles`, `vehicles`, `items`, `addon_account_data` | ESX table names, for servers that renamed them. |
@@ -191,6 +195,11 @@ If Atlas cannot be reached, events are kept on disk and sent in order once the c
 | `esx.deathSettleMs` | `500` | Older ESX: how long to wait after the dead state changes for the matching client event. |
 | `esx.deathSignalMs` | `5000` | Older ESX: how recent a client death or respawn event must be to count. |
 | `esx.changedColumn` | `last_seen` | `users` column that updates when a row changes, used to read only changed rows. |
+| `esx.createdColumn` | `created_at` | `users` column set when a character is made. Characters made from 23 October 2026 on are keyed by identifier and this time, so a new character in an emptied slot starts fresh. Empty keys by identifier only. |
+| `esx.keyTries` | `3` | Tries at reading a new character's key, a second apart, before it is sent by its plain identifier. |
+| `qbcore.tables` | `players`, `player_vehicles`, `bank_accounts`, `management_funds`, `inventories`, `stashitems`, `trunkitems`, `gloveboxitems` | QBCore table names, for servers that renamed them. |
+| `qbcore.moneyTypes` | `cash`, `bank`, `crypto` as themselves, `blackmoney` as `black_money` | Money type per QBCore money type. Cash, bank and crypto are included in money snapshots; any other name is reported in money changes only. Types left out keep their own name. |
+| `qbcore.changedColumn` | `last_updated` | `players` column that updates when a row changes, used to read only changed rows. |
 | `consoleWords` | `error`, `failed`, `warning`, `hitch` | Words that make a console line worth sending, in any letter case. |
 | `consoleMaxLines` | `100` | Most console lines sent per second. |
 | `consoleMaxChars` | `1000` | Console lines are cut to this length. |

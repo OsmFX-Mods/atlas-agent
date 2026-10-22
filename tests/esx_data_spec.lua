@@ -14,14 +14,13 @@ local function boot(resources, files, convars)
         provided = { es_extended = { getSharedObject = function() return ESX end } },
         load = {
             'server/db.lua', 'server/adapters/detect.lua', 'server/sources.lua', 'server/framework.lua',
-            'server/characters.lua', 'server/money.lua', 'server/adapters/esx_data.lua', 'server/adapters/esx.lua',
+            'server/characters.lua', 'server/staff.lua', 'server/money.lua', 'server/adapters/esx_data.lua', 'server/adapters/esx.lua',
             'server/adapters/ox_inventory_data.lua', 'server/adapters/renewed_banking.lua', 'server/snapshots.lua', 'server/places.lua',
         },
     })
     AtlasConfig.moneyPageRows = 2
     AtlasConfig.censusPageRows = 2
     local db = Atlas.db
-    db.available = function() return true end
     db.now = function() return DB_NOW end
     db.scalar = function(sql)
         state.queries[#state.queries + 1] = sql
@@ -30,11 +29,24 @@ local function boot(resources, files, convars)
     end
     db.query = function(sql, params)
         state.queries[#state.queries + 1] = sql
+        -- Columns: last_seen carries state.extra, created_at exists when state.created is set
+        if sql:find('information_schema', 1, true) then
+            if state.extraErr then return nil, state.extraErr end
+            local cols = { { c = 'identifier', e = '' }, { c = 'firstname', e = '' }, { c = 'lastname', e = '' } }
+            if state.extra then cols[#cols + 1] = { c = 'last_seen', e = state.extra } end
+            if state.created then cols[#cols + 1] = { c = 'created_at', e = 'DEFAULT_GENERATED' } end
+            return cols
+        end
         state.lastParams = params
-        if state.queryFn then return state.queryFn(sql, params) end
-        return state.rows
+        local rows = state.rows
+        if state.queryFn then rows = state.queryFn(sql, params) end
+        -- Keys: without a creation column the key the query selects is the plain identifier
+        for _, r in ipairs(type(rows) == 'table' and rows or {}) do if r.k == nil then r.k = r.identifier or r.owner end end
+        return rows
     end
     fx.advance(200)
+    -- Database: up only after attach, so each spec chooses the columns the first read finds
+    db.available = function() return true end
 end
 
 local function events(etype)
@@ -426,6 +438,65 @@ describe('esx snapshots', function()
         fx.advance(62 * 60000, 5000)
         collect()
         expect(modes[#modes]).toBe('full')
+        fx.teardown()
+    end)
+end)
+
+describe('esx character keys', function()
+    local KEY_SQL = "CASE WHEN `created_at` >= FROM_UNIXTIME(1761177600) THEN CONCAT(identifier, '#', FLOOR(UNIX_TIMESTAMP(`created_at`))) ELSE identifier END"
+
+    it('keys characters by identifier and creation time when users has a fixed creation column', function()
+        boot()
+        state.created = true
+        expect(data().keys.timed()).toBe(true)
+        state.rows = { { identifier = 'char1:a', k = 'char1:a#1761200000', accounts = '{"bank":5}' } }
+        expect(data().money.page(nil, nil, 5)).toEqual({ { 'char1:a#1761200000', 0, 5, 0 } })
+        expect(state.queries[#state.queries]:find('SELECT identifier, ' .. KEY_SQL .. ' AS k, accounts', 1, true) ~= nil).toBe(true)
+        expect(#fx.printed('esx characters are keyed by identifier and creation time')).toBe(1)
+        fx.teardown()
+    end)
+
+    it('keeps plain identifiers without the column, when it updates with the row, or when the config names none', function()
+        boot()
+        expect(data().keys.timed()).toBe(false)
+        expect(data().keys.of('char1:a')).toBe('char1:a')
+        fx.teardown()
+        boot()
+        state.created = true
+        AtlasConfig.esx.createdColumn = ''
+        expect(data().keys.timed()).toBe(false)
+        fx.teardown()
+    end)
+
+    it('reads one key, tells an empty slot from a database error, and lists an account', function()
+        boot()
+        state.created = true
+        state.count = 'char2:a#1761200000'
+        expect(data().keys.of('char2:a')).toBe('char2:a#1761200000')
+        expect(data().keys.current('char2:a')).toBe('char2:a#1761200000')
+        Atlas.db.scalar = function() return nil end
+        expect(data().keys.current('char2:a')).toBe(false)
+        expect(data().keys.of('char2:a')).toBe('char2:a')
+        Atlas.db.scalar = function() return nil, 'timeout' end
+        expect(data().keys.current('char2:a')).toBeNil()
+        expect(data().keys.of('char2:a')).toBeNil()
+
+        state.rows = { { identifier = 'char1:abc', k = 'char1:abc', n = ' Ann Lee ' }, { identifier = 'char2:abc', k = 'char2:abc#1761200000', n = nil } }
+        local list = data().keys.account('abc')
+        expect(list).toEqual({ ['char1:abc'] = { key = 'char1:abc', name = 'Ann Lee' }, ['char2:abc'] = { key = 'char2:abc#1761200000', name = '' } })
+        expect(state.lastParams).toEqual({ 'abc', '%:abc' })
+        expect(data().keys.account('ab%c')).toBeNil()
+        fx.teardown()
+    end)
+
+    it('reads vehicle owners through the users table when keys are timed', function()
+        boot()
+        state.created = true
+        state.rows = { { k = 'char1:a#1761200000', plate = 'AA', vehicle = '{"model":5}' } }
+        local rows = data().vehicles.owned.page(nil, 10)
+        expect(rows[1][1]).toBe('char1:a#1761200000')
+        expect(state.queries[#state.queries]:find('LEFT JOIN `users` u ON u.identifier = v.owner', 1, true) ~= nil).toBe(true)
+        expect(state.queries[#state.queries]:find('COALESCE(' .. KEY_SQL:gsub('`created_at`', 'u.`created_at`'):gsub('identifier', 'u.identifier'), 1, true) ~= nil).toBe(true)
         fx.teardown()
     end)
 end)

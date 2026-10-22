@@ -4,7 +4,7 @@
 AtlasConfig = {
     endpoint = GetConvar('atlas:endpoint', 'http://127.0.0.1:7271'),
 
-    -- Framework: 'auto' uses the one that is installed; name one (qbox, esx) to force it; 'none' sends the account id as the character id
+    -- Framework: 'auto' uses the one that is installed; name one (qbox, qbcore, esx) to force it; 'none' sends the account id as the character id
     framework = GetConvar('atlas:framework', 'auto'):lower(),
 
     -- Positions: ms between samples per player (500 or more)
@@ -48,6 +48,8 @@ AtlasConfig = {
 
     -- ox_inventory createItem: fires for every AddItem, so it is off by default
     oxCreateItem = GetConvarInt('atlas:ox_createitem', 0) == 1,
+    -- qb-inventory ItemAdded: fires for every AddItem, so it is off by default
+    qbCreateItem = GetConvarInt('atlas:qb_createitem', 0) == 1,
     -- Place visits: shop and stash opens become place.visit
     placeVisits = GetConvarInt('atlas:place_visits', 1) == 1,
     -- Place size: radius in metres per kind of place; custom is used for places added by other scripts
@@ -71,6 +73,13 @@ AtlasConfig = {
 
     debug = GetConvarInt('atlas:debug', 0) == 1,
 
+    -- Character deletion: ms to wait after a delete request before checking the character is gone from the database
+    deleteCheckMs = 3000,
+
+    -- Staff ranks: ACE permissions that make a player staff and the rank each one means, highest first;
+    -- Qbox and QBCore grant god, admin and mod, and server.cfg usually gives admins command
+    staffAces = { { 'god', 'god' }, { 'admin', 'admin' }, { 'mod', 'mod' }, { 'command', 'admin' } },
+
     -- Qbox: database table names, for servers that renamed them
     qbox = {
         tables = { characters = 'players', vehicles = 'player_vehicles', properties = 'properties' },
@@ -91,5 +100,23 @@ AtlasConfig = {
         deathSignalMs = 5000,
         -- Changed column: the users timestamp that updates with the row, so only changed rows are read; leave empty to read every row
         changedColumn = 'last_seen',
+        -- Created column: the users timestamp set when a character is made; characters made from 2026-10-23 on are keyed by
+        -- identifier and this time, so a new character in an emptied slot starts fresh; leave empty to key by identifier only
+        createdColumn = 'created_at',
+        -- Key reads: tries at reading a new character's key before it is sent by its plain identifier, one second apart
+        keyTries = 3,
+    },
+
+    -- QBCore: money types and database table names, for servers that renamed them
+    qbcore = {
+        -- Money types: QBCore money type to the type it counts as; cash, bank and crypto are part of money snapshots,
+        -- any other name (such as black_money) is reported in money changes only; types left out keep their own name
+        moneyTypes = { cash = 'cash', bank = 'bank', crypto = 'crypto', blackmoney = 'black_money' },
+        tables = {
+            characters = 'players', vehicles = 'player_vehicles', bankAccounts = 'bank_accounts', managementFunds = 'management_funds',
+            inventories = 'inventories', stashItems = 'stashitems', trunkItems = 'trunkitems', gloveboxItems = 'gloveboxitems',
+        },
+        -- Changed column: the players timestamp that updates with the row, so only changed rows are read; leave empty to read every row
+        changedColumn = 'last_updated',
     },
 }

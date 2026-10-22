@@ -3,7 +3,7 @@ local fx = load_module('tests/fivem.lua')
 local function boot()
     fx.boot({
         convars = { ['atlas:token'] = 'atl_live_x' },
-        load = { 'server/adapters/detect.lua', 'server/sources.lua', 'server/framework.lua', 'server/characters.lua', 'server/money.lua' },
+        load = { 'server/adapters/detect.lua', 'server/sources.lua', 'server/framework.lua', 'server/characters.lua', 'server/staff.lua', 'server/money.lua' },
     })
     fx.addPlayer(4, { ped = { x = 10.0, y = 10.0, z = 30.0, h = 0.0 } })
     Atlas.ensurePlayer(4)

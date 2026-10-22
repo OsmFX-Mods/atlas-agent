@@ -9,8 +9,16 @@ Atlas.charFallback = nil   -- charFallback: true when no framework is installed,
 
 local frameworks = {} -- frameworks: registered definitions in priority order
 
+--- Displaced: the name of a resource that replaces this framework when one is installed, such as qbx_core, which also answers to qb-core.
+local function displaced(def)
+    for _, res in ipairs(def.displacedBy or {}) do
+        if GetResourceState(res) ~= 'missing' then return res end
+    end
+    return nil
+end
+
 local function wanted(def)
-    return cfg.framework == 'auto' or cfg.framework == def.name
+    return (cfg.framework == 'auto' or cfg.framework == def.name) and not displaced(def)
 end
 
 local warned = false -- warned: the unknown-setting warning is shown once
@@ -28,6 +36,7 @@ local function checkSetting()
 end
 
 local function installed(def)
+    if displaced(def) then return false end
     for i = 1, #def.resources do
         if GetResourceState(def.resources[i]) == 'missing' then return false end
     end
@@ -49,12 +58,14 @@ function Atlas.refreshFallback()
     Atlas.rebuildActors()
 end
 
---- @param def table { name, resources, attach, detach?, data? }
+--- @param def table { name, resources, attach, detach?, data?, displacedBy? }
 --- Data: optional readers for saved data (money, census, vehicles, groups); a missing one skips that snapshot.
+--- Displaced by: resources whose presence means another framework runs under this one's name, so this one stays off.
 function Atlas.registerFramework(def)
     local attach, detach = def.attach, def.detach
     def.group = 'framework'
     def.enabled = function() return wanted(def) end
+    def.displaced = function() return displaced(def) end
     def.data = def.data or Atlas.frameworkData[def.name]
     def.attach = function()
         attach()
