@@ -34,7 +34,8 @@ local function onOwnerChange(p)
     local vehicleId, toChar = tonumber(p.vehicleId), p.newCitizenId
     -- Model and plate need a database read, which hooks cannot wait for, so a thread reads them
     CreateThread(function()
-        local row = vehicleId and Atlas.db.single('SELECT hash, plate FROM player_vehicles WHERE id = ?', { vehicleId })
+        local t = common.sqlName(AtlasConfig.qbox.tables.vehicles)
+        local row = vehicleId and t and Atlas.db.single(('SELECT hash, plate FROM %s WHERE id = ?'):format(t), { vehicleId })
         local src = toChar and Atlas.charToSrc[toChar] or nil
         Atlas.emit('vehicle.transfer', {
             model = row and common.u32(tonumber(row.hash)) or nil,

@@ -174,6 +174,7 @@ local function natives()
         return out
     end)
     set('GetPlayerName', function(src) local p = player(src); return p and p.name end)
+    set('IsPlayerAceAllowed', function(src, ace) local p = player(tonumber(src)); return p ~= nil and p.aces[ace] == true end)
     set('GetPlayerIdentifiers', function(src) local p = player(src); return p and p.identifiers end)
     set('GetPlayerRoutingBucket', function(src) local p = player(src); return p and p.bucket or 0 end)
     set('GetPlayerPed', function(src) local p = player(src); return p and p.ped and src + 1000 or 0 end)
@@ -292,6 +293,7 @@ function fx.addPlayer(src, spec)
         name = spec.name or ('Player' .. src),
         identifiers = spec.identifiers or { 'license:lic' .. src, 'ip:10.0.0.' .. src },
         bucket = spec.bucket or 0,
+        aces = spec.aces or {},
         ped = spec.ped,
     }
     return S.players[src]

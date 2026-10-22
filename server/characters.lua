@@ -38,6 +38,7 @@ function C.load(src, c)
     if not c.resumed then
         Atlas.emit('teleport.known', { reason = 'spawn' }, src)
     end
+    Atlas.staff.check(src)
     return p
 end
 
@@ -132,6 +133,32 @@ function C.markUp(src)
         if not respawned then Atlas.emit('medical.revive', {}, src, { fresh = true }) end
     end
     p.down = false
+end
+
+--- State: a medical or restraint flag changed (isdead, inlaststand, ishandcuffed, injail); emits player.state,
+--- and for the two life flags combat.death or medical.revive. Jail is a number of months, the others are true or false.
+function C.setState(src, key, value)
+    local p = loaded(src)
+    if not p then return end
+    p.state = p.state or {}
+    local old = p.state[key]
+    if key == 'injail' then
+        if (tonumber(old) or 0) == (tonumber(value) or 0) then return end
+    elseif old == value then
+        return
+    end
+    p.state[key] = value
+    p.dead = p.state.isdead == true or p.state.inlaststand == true
+
+    Atlas.emit('player.state', { key = key, value = value }, p.src, { fresh = true })
+
+    local life = key == 'isdead' or key == 'inlaststand'
+    if life and value == true then
+        C.markDown(p.src, key == 'isdead' and 'dead' or 'laststand')
+    elseif not p.dead then
+        -- Revive: medical scripts often only tell the client, so this state change is all the server sees
+        if life then C.markUp(p.src) else p.down = false end
+    end
 end
 
 --- Respawn: the character respawned at a hospital; the state flip that follows is not a revive.

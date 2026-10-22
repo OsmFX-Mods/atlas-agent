@@ -168,7 +168,7 @@ describe('character exports', function()
     local function bootCharacters()
         fx.boot({
             convars = { ['atlas:token'] = 'atl_live_x' },
-            load = { 'server/adapters/detect.lua', 'server/sources.lua', 'server/framework.lua', 'server/characters.lua',
+            load = { 'server/adapters/detect.lua', 'server/sources.lua', 'server/framework.lua', 'server/characters.lua', 'server/staff.lua',
                 'server/money.lua', 'server/exports.lua' },
         })
         api = fx.state.exported

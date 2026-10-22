@@ -1,6 +1,7 @@
 -- Qbox adapter: turns qbx_core events into Atlas events (built against qbx_core 1.23.0).
 -- Data: the database readers for snapshots, and the places and prices Qbox resources provide, are in qbox_data.lua.
 
+local cfg = AtlasConfig
 local NAME = 'qbox'
 local qbx = exports.qbx_core
 local C = Atlas.characters
@@ -10,14 +11,6 @@ local STATE_KEYS = { isdead = true, inlaststand = true, ishandcuffed = true, inj
 local function active() return Atlas.enabled and Atlas.adapterActive(NAME) end
 
 local accountChars = {} -- accountChars: each player's account characters and names, used to confirm deletions
-
--- Identity: reads character, job and gang facts from PlayerData.
-local function charNameOf(pd)
-    local ci = pd.charinfo
-    if type(ci) == 'table' and ci.firstname then
-        return ('%s %s'):format(ci.firstname, ci.lastname or '')
-    end
-end
 
 --- Character start: reads the character facts Atlas needs and hands them to the shared character pipeline.
 local function charStart(src, pd, resumed)
@@ -34,7 +27,7 @@ local function charStart(src, pd, resumed)
     }
     p = C.load(src, {
         char = pd.citizenid,
-        name = charNameOf(pd),
+        name = Atlas.qb.charName(pd),
         job = job.name,
         grade = type(job.grade) == 'table' and job.grade.level or nil,
         duty = job.onduty == true,
@@ -104,41 +97,15 @@ end)
 -- onSetMetaData: emits player.state, combat.death and medical.revive.
 AddEventHandler('qbx_core:server:onSetMetaData', function(key, old, value, src)
     if not active() or not STATE_KEYS[key] then return end
-    src = tonumber(src)
-    local p = Atlas.players[src]
-    if not p or not p.char then return end
-    if key == 'injail' then
-        if (tonumber(old) or 0) == (tonumber(value) or 0) then return end
-    elseif old == value then
-        return
-    end
-    p.state = p.state or {}
-    p.state[key] = value
-    p.dead = p.state.isdead == true or p.state.inlaststand == true
-
-    Atlas.emit('player.state', { key = key, value = value }, src, { fresh = true })
-
-    local life = key == 'isdead' or key == 'inlaststand'
-    if life and value == true then
-        C.markDown(src, key == 'isdead' and 'dead' or 'laststand')
-    elseif not p.dead then
-        -- Revive: qbx_medical only tells the client, so this state change is all the server sees
-        if life then C.markUp(src) else p.down = false end
-    end
+    if key ~= 'injail' and old == value then return end
+    C.setState(tonumber(src), key, value)
 end)
 
 -- Character deletion: qbx_core only offers an ox_lib callback and an old net event for it.
 -- Check: the character must belong to the player's account and be gone from the database.
 local function fetchAccountChars(src)
-    local p = Atlas.players[src]
-    if not p or not Atlas.db.available() then return end
-    local l2, l1 = p.ids.license2 or '', p.ids.license or ''
-    local rows = Atlas.db.query([[SELECT citizenid, CONCAT_WS(' ', JSON_UNQUOTE(JSON_EXTRACT(charinfo, '$.firstname')),
-        JSON_UNQUOTE(JSON_EXTRACT(charinfo, '$.lastname'))) AS n FROM players WHERE license = ? OR license = ?]], { l2, l1 })
-    if type(rows) ~= 'table' then return end
-    local set = {}
-    for i = 1, #rows do set[rows[i].citizenid] = rows[i].n or '' end
-    accountChars[src] = set
+    local set = Atlas.qb.accountChars(cfg.qbox.tables.characters, Atlas.players[src])
+    if set then accountChars[src] = set end
 end
 
 Atlas.onJoin(function(p)
@@ -155,11 +122,10 @@ local function onDeleteRequest(src, citizenId)
     local player = Atlas.players[src] -- player: compared after the wait, since the id can be reused by someone else
     checking[citizenId] = true
     CreateThread(function()
-        Wait(3000)
-        -- Error: a failed query also returns nil, which must not be read as "row is gone"
-        local exists, err = Atlas.db.scalar('SELECT 1 FROM players WHERE citizenid = ?', { citizenId })
+        Wait(cfg.deleteCheckMs)
+        local gone = Atlas.qb.gone(cfg.qbox.tables.characters, citizenId)
         checking[citizenId] = nil
-        if exists == nil and err == nil and owned[citizenId] ~= nil then
+        if gone and owned[citizenId] ~= nil then
             owned[citizenId] = nil
             Atlas.emit('character.delete', { char = citizenId, char_name = name ~= '' and name or nil }, Atlas.players[src] == player and src or nil)
         end

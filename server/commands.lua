@@ -74,6 +74,8 @@ RegisterCommand('atlas_selftest', function(source, args)
             end
             if #def.resources == 0 then
                 -- Always on: nothing to wait for
+            elseif def.displaced and def.displaced() then
+                out('     adapter %s skipped (%s is installed)', def.name, def.displaced())
             elseif def.enabled and not def.enabled() then
                 out('     adapter %s skipped (atlas:%s is %s)', def.name, def.group, AtlasConfig[def.group])
             elseif waiting then

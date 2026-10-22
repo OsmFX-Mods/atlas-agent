@@ -2,7 +2,8 @@
 -- Source: signals verified in es_extended server/modules/player, server/classes/player and the ox_inventory override.
 -- Events: esx:playerLoaded, esx:playerDropped, esx:setJob and the three account events keep their arguments from 1.9.4 on.
 -- Data: the database readers for snapshots, and the places and prices ESX resources provide, are in esx_data.lua.
--- Not covered: character deletion and vehicle purchases have no server event in ESX, so snapshots pick them up instead.
+-- Characters: keyed as esx_data.lua describes; deletions are confirmed against the database after esx_multicharacter's request.
+-- Not covered: vehicle purchases have no server event in ESX, so snapshots pick them up instead.
 
 local cfg = AtlasConfig
 local C, M = Atlas.characters, Atlas.money
@@ -52,13 +53,15 @@ local function charNameOf(xPlayer)
     end
 end
 
-local function charStart(src, xPlayer, isNew, resumed)
-    local identifier = xPlayer.identifier
-    if type(identifier) ~= 'string' or identifier == '' then return end
+local idents = {}  -- idents[src]: the identifier of the character loaded or being loaded for a player
+local pending = {} -- pending[src]: { identifier, calls } while a character's key is read; calls are money changes that came meanwhile
+local owned = {}   -- owned[src]: the account's characters as identifier to { key, name }, used to confirm deletions
+
+local function charStart(src, xPlayer, key, isNew, resumed)
     local ok, job = pcall(xPlayer.getJob)
     if not ok or type(job) ~= 'table' then job = {} end
-    C.load(src, {
-        char = identifier,
+    local p = C.load(src, {
+        char = key,
         name = charNameOf(xPlayer),
         job = job.name,
         grade = tonumber(job.grade),
@@ -68,26 +71,107 @@ local function charStart(src, xPlayer, isNew, resumed)
         isNew = isNew == true,
         resumed = resumed,
     })
+    if p and owned[src] then owned[src][xPlayer.identifier] = { key = p.char, name = p.charName or '' } end
+end
+
+local process -- process: handles one money change; defined with the money events below
+
+--- Begin: starts a character once its key is known; plain identifiers start at once, timed keys after one database read.
+local function begin(src, xPlayer, isNew, resumed)
+    local identifier = xPlayer.identifier
+    if type(identifier) ~= 'string' or identifier == '' then return end
+    idents[src] = identifier
+    if data.keys.timed(true) == false or not Atlas.db.available() then return charStart(src, xPlayer, identifier, isNew, resumed) end
+    local job = { identifier = identifier, calls = {} }
+    pending[src] = job
+    CreateThread(function()
+        local key
+        for _ = 1, cfg.esx.keyTries do
+            key = data.keys.of(identifier)
+            if key or pending[src] ~= job then break end
+            Wait(1000)
+        end
+        if pending[src] ~= job then return end
+        pending[src] = nil
+        local fresh = playerOf(src)
+        if not fresh or fresh.identifier ~= identifier then idents[src] = nil return end
+        if not key then
+            Atlas.warn('esx: could not read the key of %s, so it is sent by its identifier', identifier)
+            key = identifier
+        end
+        charStart(src, fresh, key, isNew, resumed)
+        for _, call in ipairs(job.calls) do process(table.unpack(call, 1, 7)) end
+    end)
+end
+
+--- End: the character left, or its load was cancelled before the key was read.
+local function finish(src, reason)
+    pending[src], idents[src] = nil, nil
+    local p = Atlas.players[src]
+    if p and p.char then C.unload(p, reason) end
 end
 
 -- playerLoaded: server-side after login or character selection; emits session.char_start, plus character.create for new characters.
 AddEventHandler('esx:playerLoaded', function(src, xPlayer, isNew)
     if not active() or type(xPlayer) ~= 'table' then return end
     src = tonumber(src)
-    if not src then return end
-    local p = Atlas.players[src]
-    if p and p.char == xPlayer.identifier then return end
-    if p and p.char then C.unload(p, 'switch') end
-    charStart(src, xPlayer, isNew, false)
+    if not src or idents[src] == xPlayer.identifier then return end
+    finish(src, 'switch')
+    begin(src, xPlayer, isNew, false)
 end)
 
 -- playerDropped: fired for a disconnect and for a logout to the character screen; emits session.char_end.
 -- Reason: 'esx_player_logout' is the logout, anything else is a disconnect.
 AddEventHandler('esx:playerDropped', function(src, reason)
     if not active() then return end
-    local p = Atlas.players[tonumber(src)]
-    if p then C.unload(p, reason == 'esx_player_logout' and 'logout' or 'drop') end
+    src = tonumber(src)
+    if src then finish(src, reason == 'esx_player_logout' and 'logout' or 'drop') end
 end)
+
+Atlas.onDrop(function(p)
+    pending[p.src], idents[p.src], owned[p.src] = nil, nil, nil
+end)
+
+-- Character deletion: esx_multicharacter deletes every row of the slot's identifier, after which the slot can be filled again.
+-- Check: the character must belong to the player's account, and after a short wait its row must be gone or hold another character.
+local function fetchOwned(src)
+    local p = Atlas.players[src]
+    if not p or not Atlas.db.available() then return end
+    local full = p.ids[GetConvar('esx:identifier', 'license')]
+    local list = type(full) == 'string' and data.keys.account(full:match(':(.+)$'))
+    if list then owned[src] = list end
+end
+
+Atlas.onJoin(function(p)
+    if Atlas.adapterActive(NAME) then CreateThread(function() fetchOwned(p.src) end) end
+end)
+
+local checking = {} -- checking: identifiers being checked, so repeated requests cost one query
+
+local function onDeleteRequest(src, slot)
+    slot = tonumber(slot)
+    local chars = owned[src]
+    if not active() or not slot or not chars then return end
+    local identifier, char -- identifier: the account character in the requested slot
+    for id, c in pairs(chars) do
+        if tonumber(id:match('^.-(%d+):[^:]+$')) == slot then identifier, char = id, c break end
+    end
+    if not identifier or checking[identifier] then return end
+    local player = Atlas.players[src] -- player: compared after the wait, since the id can be reused by someone else
+    checking[identifier] = true
+    CreateThread(function()
+        Wait(cfg.deleteCheckMs)
+        local key = data.keys.current(identifier) -- key: false once the slot is empty, nil after a database error
+        checking[identifier] = nil
+        if key == nil or key == char.key or chars[identifier] ~= char then return end
+        chars[identifier] = nil
+        Atlas.emit('character.delete', { char = char.key, char_name = char.name ~= '' and char.name or nil }, Atlas.players[src] == player and src or nil)
+    end)
+end
+
+RegisterNetEvent('esx_multicharacter:DeleteCharacter', function(slot) onDeleteRequest(source, slot) end)
+RegisterNetEvent('__xLib_cb_esx_multicharacter:deleteCharacter', function(_, _, slot) onDeleteRequest(source, slot) end)
+RegisterNetEvent('__ox_cb_esx_multicharacter:deleteCharacter', function(_, _, slot) onDeleteRequest(source, slot) end)
 
 -- setJob: primary job or grade changes, and duty changes of the same job; emits job.change or duty.change.
 AddEventHandler('esx:setJob', function(src, job)
@@ -128,48 +212,58 @@ M.onFlush(function(src)
     held[src] = nil
 end)
 
+--- Process: records one money change; `at` stamps a change that waited for its character's key.
+function process(action, src, account, amount, reason, balance, at)
+    local slot = cfg.esx.accounts[account] -- slot: the money type this account counts as
+    local p = Atlas.players[src]
+    if action == 'set' and reason == SYNC_REASON then
+        release(src, account)
+        local prev = p and p.money[slot]
+        local h = {
+            slot = slot, amount = amount, balance = balance, reason = reason, at = at or Atlas.now(), prev = prev,
+            delta = M.apply(p, slot, 'set', amount, balance),
+        }
+        held[src] = held[src] or {}
+        held[src][account] = h
+        CreateThread(function()
+            Wait(0)
+            if held[src] and held[src][account] == h then release(src, account) end
+        end)
+        return
+    end
+
+    local last -- last: the balance before a held set moved it, so a set that follows is measured from the right start
+    local h = held[src] and held[src][account]
+    if h then
+        if balance ~= nil and h.balance == balance then
+            held[src][account] = nil
+            last = h.prev
+        else
+            release(src, account)
+        end
+    end
+    local delta = M.apply(p, slot, action, amount, balance, last)
+    M.emit(src, p, slot, action, amount, delta, balance, reason, at)
+end
+
 local function onMoney(action)
     return function(src, account, amount, reason)
         if not active() then return end
         src, amount = tonumber(src), tonumber(amount)
         if not src or not amount or type(account) ~= 'string' then return end
         account = account:lower()
-        local slot = cfg.esx.accounts[account] -- slot: the money type this account counts as
+        local slot = cfg.esx.accounts[account]
         if type(slot) ~= 'string' or slot == '' then return end
-
-        local p = Atlas.players[src]
         local live = liveBalances(src)
         local balance = live and live[slot] or nil
         reason = reasonOf(reason)
-
-        if action == 'set' and reason == SYNC_REASON then
-            release(src, account)
-            local prev = p and p.money[slot]
-            local h = {
-                slot = slot, amount = amount, balance = balance, reason = reason, at = Atlas.now(), prev = prev,
-                delta = M.apply(p, slot, 'set', amount, balance),
-            }
-            held[src] = held[src] or {}
-            held[src][account] = h
-            CreateThread(function()
-                Wait(0)
-                if held[src] and held[src][account] == h then release(src, account) end
-            end)
+        -- Pending: a change made while the character's key is read waits for it, with the balance and time it had
+        local job = pending[src]
+        if job then
+            job.calls[#job.calls + 1] = { action, src, account, amount, reason, balance, Atlas.now() }
             return
         end
-
-        local last -- last: the balance before a held set moved it, so a set that follows is measured from the right start
-        local h = held[src] and held[src][account]
-        if h then
-            if balance ~= nil and h.balance == balance then
-                held[src][account] = nil
-                last = h.prev
-            else
-                release(src, account)
-            end
-        end
-        local delta = M.apply(p, slot, action, amount, balance, last)
-        M.emit(src, p, slot, action, amount, delta, balance, reason)
+        process(action, src, account, amount, reason, balance)
     end
 end
 
@@ -197,11 +291,27 @@ local function itemsCatalog()
     end
 end
 
+-- Group: /setgroup changes the group in the state bag; the rank is read again once the change has been applied.
+AddStateBagChangeHandler('group', nil, function(bag)
+    if not active() then return end
+    local src = GetPlayerFromStateBagName(bag)
+    if not src or src == 0 then return end
+    CreateThread(function()
+        Wait(0)
+        Atlas.staff.check(src)
+    end)
+end)
+
 Atlas.registerFramework({
     name = NAME,
     resources = { 'es_extended' },
     -- Inventory accounts: ESX mirrors these accounts as ox_inventory items, so the item census leaves them out
     inventoryAccounts = { 'money', 'black_money' },
+    -- Staff rank: ESX keeps the player's group in their state bag; user is everyone without a rank
+    staffRole = function(src)
+        local group = Player(src).state.group
+        if type(group) == 'string' and group ~= 'user' then return group end
+    end,
     -- Selftest: setting the bank to its current balance reaches the money hook without changing anything
     selftestMoney = function(src)
         return pcall(function()
@@ -217,13 +327,13 @@ Atlas.registerFramework({
         static = pcall(function() return exports.es_extended:RunStaticPlayerMethod(0, 'getAccounts', true) end)
         -- Loaded characters: picks up characters already loaded when the agent starts
         CreateThread(function()
+            -- Columns: read once here, so later logins know at once whether keys are timed
+            if Atlas.db.available() then data.keys.timed() end
             for _, s in ipairs(GetPlayers()) do
                 local src = tonumber(s)
                 local xPlayer = playerOf(src)
-                if xPlayer then
-                    local p = Atlas.players[src]
-                    if not (p and p.char == xPlayer.identifier) then charStart(src, xPlayer, false, true) end
-                end
+                if xPlayer and idents[src] ~= xPlayer.identifier then begin(src, xPlayer, false, true) end
+                fetchOwned(src)
             end
             itemsCatalog()
         end)

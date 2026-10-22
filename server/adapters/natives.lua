@@ -170,7 +170,8 @@ end)
 
 -- txAdmin events: become admin.action and server.annotation.
 -- Privacy: txAdmin identifier lists can contain IP addresses, so they are never sent.
-local function adminAction(action, target, by, detail)
+--- Admin action: a staff action on a player; target is the player's server id, by the staff member's name.
+function Atlas.adminAction(action, target, by, detail)
     local src = tonumber(target)
     if src and src <= 0 then src = nil end
     local p = src and Atlas.players[src]
@@ -180,6 +181,17 @@ local function adminAction(action, target, by, detail)
         by = type(by) == 'string' and by:sub(1, 64) or nil,
         detail = type(detail) == 'string' and detail:sub(1, 512) or nil,
     }, p and src or nil)
+end
+
+--- Admin teleport: staff moved a player, themselves or another one, to someone; sent for the player who moved.
+function Atlas.adminTeleport(mover, action, by, target)
+    local p, t = Atlas.players[mover], Atlas.players[target]
+    if not p then return end
+    Atlas.emit('admin.teleport', {
+        action = action,
+        by = GetPlayerName(by),
+        target_char = t and Atlas.effectiveChar(t) or nil,
+    }, mover)
 end
 
 AddEventHandler('txAdmin:events:announcement', function(d)
@@ -207,11 +219,11 @@ AddEventHandler('txAdmin:events:serverShuttingDown', function(d)
 end)
 
 AddEventHandler('txAdmin:events:playerWarned', function(d)
-    if Atlas.enabled and type(d) == 'table' then adminAction('warn', d.targetNetId, d.author, d.reason) end
+    if Atlas.enabled and type(d) == 'table' then Atlas.adminAction('warn', d.targetNetId, d.author, d.reason) end
 end)
 
 AddEventHandler('txAdmin:events:playerKicked', function(d)
-    if Atlas.enabled and type(d) == 'table' then adminAction('kick', d.target, d.author, d.reason) end
+    if Atlas.enabled and type(d) == 'table' then Atlas.adminAction('kick', d.target, d.author, d.reason) end
 end)
 
 AddEventHandler('txAdmin:events:playerBanned', function(d)
@@ -220,11 +232,11 @@ AddEventHandler('txAdmin:events:playerBanned', function(d)
     if type(detail) == 'string' and type(d.durationTranslated) == 'string' then
         detail = ('%s (%s)'):format(detail, d.durationTranslated)
     end
-    adminAction('ban', d.targetNetId, d.author, detail)
+    Atlas.adminAction('ban', d.targetNetId, d.author, detail)
 end)
 
 AddEventHandler('txAdmin:events:playerHealed', function(d)
-    if Atlas.enabled and type(d) == 'table' then adminAction('heal', d.target, d.author, nil) end
+    if Atlas.enabled and type(d) == 'table' then Atlas.adminAction('heal', d.target, d.author, nil) end
 end)
 
 -- Chat: length and command name only, unless atlas:chat_content is 1.
