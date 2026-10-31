@@ -279,6 +279,33 @@ describe('items census', function()
         fx.teardown()
     end)
 
+    it('sends a page of fat inventories as several events, with the final flag on the last one only', function()
+        local fat = string.rep('x', 1500000)
+        bootCensus(function(sql, params)
+            if sql:find('SELECT citizenid, inventory', 1, true) and params[#params] == '' then
+                return { { citizenid = 'AAA', inventory = fat }, { citizenid = 'BBB', inventory = fat } }
+            end
+            return {}
+        end)
+        run(function() Atlas.snapshots.census('full') end)
+        local players = {}
+        for _, ev in ipairs(snapshots('items.census')) do
+            if ev.data.holder_kind == 'player' then players[#players + 1] = ev.data end
+        end
+        -- two 1.5 MB rows do not fit one 2 MB event; the empty page after them closes the player kind
+        expect(#players).toBe(3)
+        expect(#players[1].rows).toBe(1)
+        expect(#players[2].rows).toBe(1)
+        expect(players[1].page).toBe(1)
+        expect(players[2].page).toBe(2)
+        expect(players[3].page).toBe(3)
+        expect(players[1].final).toBeNil()
+        expect(players[2].final).toBeNil()
+        expect(players[3].final).toBe(true)
+        expect(players[3].pages >= 3).toBe(true)
+        fx.teardown()
+    end)
+
     it('keeps the watermark when a page fails so the next run covers the same rows', function()
         bootCensus(function() return nil end)
         run(function() Atlas.snapshots.census('full') end)

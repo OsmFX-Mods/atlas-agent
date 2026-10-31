@@ -45,6 +45,8 @@ AtlasConfig = {
     censusFullMaxDays = 8,
     moneyPageRows = 500,
     censusPageRows = 200,
+    -- Most bytes of inventory text in one census event; a bigger page is sent as several (the daemon takes 4 MB a line)
+    censusPageBytes = 2000000,
 
     -- ox_inventory createItem: fires for every AddItem, so it is off by default
     oxCreateItem = GetConvarInt('atlas:ox_createitem', 0) == 1,
