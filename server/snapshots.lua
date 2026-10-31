@@ -120,6 +120,25 @@ local function censusKinds()
     return #kinds > 0 and kinds or nil
 end
 
+--- Split: cuts a page of census rows into parts of at most `limit` bytes of row text (a part holds at least one row).
+--- The daemon refuses a line over 4 MB and then drops the whole batch it came in, and 200 fat inventories escaped as
+--- JSON text can pass that, so a page is sent as several smaller ones instead.
+local function split(rows, limit)
+    local parts, cur, bytes = {}, {}, 0
+    for i = 1, #rows do
+        local row = rows[i]
+        local n = #tostring(row[1] or '') + #tostring(row[2] or '') + 16
+        if #cur > 0 and bytes + n > limit then
+            parts[#parts + 1] = cur
+            cur, bytes = {}, 0
+        end
+        cur[#cur + 1] = row
+        bytes = bytes + n
+    end
+    parts[#parts + 1] = cur -- an empty page still goes out: it carries the final flag
+    return parts
+end
+
 local function censusPages(id, mode, since, kind, accounts)
     local per = cfg.censusPageRows
     local pages = pagesFor(kind.count(since), 0, per)
@@ -127,13 +146,16 @@ local function censusPages(id, mode, since, kind, accounts)
     while true do
         local rows, nextCursor, got = kind.page(since, cursor, per)
         if not rows then Atlas.warn('census %s page failed', kind.kind) return false end
-        page = page + 1
-        if page > pages then pages = page end
         local done = got < per
-        Atlas.emit('items.census', {
-            census_id = id, mode = mode, since_ts = toMs(since), holder_kind = kind.kind,
-            rows = rows, page = page, pages = pages, final = done or nil, accounts = accounts,
-        })
+        local parts = split(rows, cfg.censusPageBytes)
+        for i, part in ipairs(parts) do
+            page = page + 1
+            if page > pages then pages = page end
+            Atlas.emit('items.census', {
+                census_id = id, mode = mode, since_ts = toMs(since), holder_kind = kind.kind,
+                rows = part, page = page, pages = pages, final = (done and i == #parts) or nil, accounts = accounts,
+            })
+        end
         if done then return true end
         cursor = nextCursor
         Wait(200)
