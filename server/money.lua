@@ -22,9 +22,20 @@ function M.apply(p, mtype, action, amount, balance, last)
     return delta
 end
 
+--- Who: the script behind the change being handled, as one value that can wait with a held or delayed change.
+--- @return table? who { res, origin, kind }
+function M.who()
+    local res, origin, kind = Atlas.attribution.who()
+    if res then return { res = res, origin = origin, kind = kind } end
+end
+
 --- Emit: sends money.change for a player, stamped with `at` when the change happened earlier.
-function M.emit(src, p, mtype, action, amount, delta, balance, reason, at)
-    if reason == 'atlas_selftest' then Atlas.selftestMoneySeen = true end
+--- @param who table? from M.who(), read while the framework's event was being handled
+function M.emit(src, p, mtype, action, amount, delta, balance, reason, at, who)
+    if reason == 'atlas_selftest' then
+        Atlas.selftestMoneySeen = true
+        Atlas.selftestWho = who
+    end
     Atlas.emit('money.change', {
         mtype = mtype,
         action = action,
@@ -33,7 +44,9 @@ function M.emit(src, p, mtype, action, amount, delta, balance, reason, at)
         balance_after = balance,
         reason = type(reason) == 'string' and reason:sub(1, 128) or 'unknown',
         job_payment = p and p.jobPayment or nil,
-    }, src, { fresh = true, at = at })
+        origin = who and who.origin or nil,
+        caller = who and who.kind or nil,
+    }, src, { fresh = true, at = at, res = who and who.res or nil })
 end
 
 --- Change: records a balance change of an online player and emits it.
@@ -41,7 +54,7 @@ function M.change(src, mtype, action, amount, balance, reason)
     local p = Atlas.players[src]
     amount = tonumber(amount) or 0
     local delta = M.apply(p, mtype, action, amount, balance)
-    M.emit(src, p, mtype, action, amount, delta, balance, reason)
+    M.emit(src, p, mtype, action, amount, delta, balance, reason, nil, M.who())
 end
 
 local flushers = {} -- flushers: callbacks that send changes an adapter is still holding for a player

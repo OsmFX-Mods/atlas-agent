@@ -24,6 +24,7 @@ server_scripts {
     'server/lib/shots.lua',
     'server/lib/inventory.lua',
     'server/lib/sandbox.lua',
+    'server/lib/caller.lua',
     -- Core: events, database access and the sampler
     'server/core.lua',
     'server/db.lua',
@@ -33,6 +34,8 @@ server_scripts {
     'server/adapters/detect.lua',
     'server/framework.lua',
     'server/characters.lua',
+    'server/attribution.lua',
+    'server/item_ledger.lua',
     'server/money.lua',
     'server/staff.lua',
     -- Adapters: attach when their target resource starts, in any start order

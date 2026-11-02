@@ -14,7 +14,7 @@ end
 local function loadOrder()
     local out = {}
     -- Shared by every boot: the stub already loads these first
-    local preloaded = { ['config.lua'] = true, ['server/core.lua'] = true }
+    local preloaded = { ['config.lua'] = true, ['server/core.lua'] = true, ['server/attribution.lua'] = true, ['server/item_ledger.lua'] = true }
     for _, path in ipairs(manifestScripts()) do
         if not preloaded[path] and not path:find('^server/lib/') then out[#out + 1] = path end
     end

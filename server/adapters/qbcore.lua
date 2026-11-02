@@ -228,6 +228,22 @@ Atlas.registerFramework({
         -- Probe: a qb-core that is not ready fails the check, which makes detect.lua retry
         local core = data.core()
         assert(type(core) == 'table' and type(core.Functions) == 'table' and core.Functions.GetPlayer, 'qb-core is not ready')
+        -- Items: without ox_inventory or qb-inventory's listeners there are no item events, so the item ledger follows PlayerData.items
+        if GetResourceState('ox_inventory') == 'missing' then
+            Atlas.itemLedger.use(function(src)
+                if Atlas.qbInventoryListens then return nil end
+                local player = core.Functions.GetPlayer(src)
+                local items = type(player) == 'table' and type(player.PlayerData) == 'table' and player.PlayerData.items
+                if type(items) ~= 'table' then return nil end
+                local counts = {}
+                for _, it in pairs(items) do
+                    if type(it) == 'table' and type(it.name) == 'string' then
+                        counts[it.name] = (counts[it.name] or 0) + (tonumber(it.amount) or 0)
+                    end
+                end
+                return counts
+            end)
+        end
         -- Loaded characters: picks up characters already loaded when the agent starts
         CreateThread(function()
             for _, s in ipairs(GetPlayers()) do

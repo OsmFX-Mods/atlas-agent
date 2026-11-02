@@ -411,6 +411,14 @@ CreateThread(function()
                 emit_us_interval = emits > 0 and math.floor(ns / emits / 10 + 0.5) / 100 or 0,
                 players = #Atlas.playerList,
                 logs = { console = Atlas.consoleState },
+                -- Coverage: what this server can report, so Atlas can say what its numbers are based on
+                framework = Atlas.framework and Atlas.framework.name or nil,
+                framework_version = Atlas.framework and Atlas.framework.resources and GetResourceMetadata(Atlas.framework.resources[1], 'version', 0) or nil,
+                inventory = Atlas.inventory,
+                inventory_version = Atlas.inventory and GetResourceMetadata(Atlas.inventory, 'version', 0) or nil,
+                attribution = cfg.attribute,
+                item_ledger = cfg.itemLedgerSec > 0,
+                ox_logger = GetConvar('ox:logger', '') ~= '' and GetConvar('ox:logger', '') or nil,
             })
         end
     end

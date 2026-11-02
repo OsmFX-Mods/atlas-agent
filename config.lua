@@ -48,10 +48,17 @@ AtlasConfig = {
     -- Most bytes of inventory text in one census event; a bigger page is sent as several (the daemon takes 4 MB a line)
     censusPageBytes = 2000000,
 
-    -- ox_inventory createItem: fires for every AddItem, so it is off by default
-    oxCreateItem = GetConvarInt('atlas:ox_createitem', 0) == 1,
-    -- qb-inventory ItemAdded: fires for every AddItem, so it is off by default
-    qbCreateItem = GetConvarInt('atlas:qb_createitem', 0) == 1,
+    -- Attribution: names the script behind each money and item change from the call stack (100 to 200 µs per change, measured on real frameworks)
+    attribute = GetConvarInt('atlas:attribute', 1) == 1,
+    -- Libraries: resources that only carry a call between scripts, so a stack is read past them
+    attributionLibs = { 'ox_lib', 'oxmysql', 'esx_lib', 'cfxlua-require', 'mysql-async', 'ghmattimysql' },
+
+    -- Items made by scripts and commands: without these, Atlas sees items leave the city but never arrive
+    oxCreateItem = GetConvarInt('atlas:ox_createitem', 1) == 1,
+    qbCreateItem = GetConvarInt('atlas:qb_createitem', 1) == 1,
+    -- Item ledger: seconds between checks of one online player's items against the item events, which finds what a
+    -- script removed (ox_inventory has no event for it); each player is read once per interval, one at a time; 0 turns it off
+    itemLedgerSec = GetConvarInt('atlas:item_ledger_sec', 60),
     -- Place visits: shop and stash opens become place.visit
     placeVisits = GetConvarInt('atlas:place_visits', 1) == 1,
     -- Place size: radius in metres per kind of place; custom is used for places added by other scripts
