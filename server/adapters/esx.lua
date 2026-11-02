@@ -66,6 +66,7 @@ local function charStart(src, xPlayer, key, isNew, resumed)
         job = job.name,
         grade = tonumber(job.grade),
         duty = job.onDuty == true,
+        jobPayment = tonumber(job.grade_salary),
         money = balances(xPlayer),
         dead = isDead(src),
         isNew = isNew == true,
@@ -100,7 +101,7 @@ local function begin(src, xPlayer, isNew, resumed)
             key = identifier
         end
         charStart(src, fresh, key, isNew, resumed)
-        for _, call in ipairs(job.calls) do process(table.unpack(call, 1, 7)) end
+        for _, call in ipairs(job.calls) do process(table.unpack(call, 1, 8)) end
     end)
 end
 
@@ -185,7 +186,7 @@ AddEventHandler('esx:setJob', function(src, job)
     if duty ~= nil and p.job == job.name and p.grade == grade then
         C.setDuty(src, duty)
     end
-    C.setJob(src, job.name, grade, duty)
+    C.setJob(src, job.name, grade, duty, tonumber(job.grade_salary))
 end)
 
 -- Money: ESX reports every change after it has been applied, with the account name, amount and reason.
@@ -204,7 +205,7 @@ local function release(src, account)
     local h = held[src] and held[src][account]
     if not h then return end
     held[src][account] = nil
-    M.emit(src, Atlas.players[src], h.slot, 'set', h.amount, h.delta, h.balance, h.reason, h.at)
+    M.emit(src, Atlas.players[src], h.slot, 'set', h.amount, h.delta, h.balance, h.reason, h.at, h.who)
 end
 
 M.onFlush(function(src)
@@ -212,15 +213,15 @@ M.onFlush(function(src)
     held[src] = nil
 end)
 
---- Process: records one money change; `at` stamps a change that waited for its character's key.
-function process(action, src, account, amount, reason, balance, at)
+--- Process: records one money change; `at` stamps a change that waited for its character's key, and `who` names the script behind it.
+function process(action, src, account, amount, reason, balance, at, who)
     local slot = cfg.esx.accounts[account] -- slot: the money type this account counts as
     local p = Atlas.players[src]
     if action == 'set' and reason == SYNC_REASON then
         release(src, account)
         local prev = p and p.money[slot]
         local h = {
-            slot = slot, amount = amount, balance = balance, reason = reason, at = at or Atlas.now(), prev = prev,
+            slot = slot, amount = amount, balance = balance, reason = reason, at = at or Atlas.now(), prev = prev, who = who,
             delta = M.apply(p, slot, 'set', amount, balance),
         }
         held[src] = held[src] or {}
@@ -243,7 +244,7 @@ function process(action, src, account, amount, reason, balance, at)
         end
     end
     local delta = M.apply(p, slot, action, amount, balance, last)
-    M.emit(src, p, slot, action, amount, delta, balance, reason, at)
+    M.emit(src, p, slot, action, amount, delta, balance, reason, at, who)
 end
 
 local function onMoney(action)
@@ -257,13 +258,14 @@ local function onMoney(action)
         local live = liveBalances(src)
         local balance = live and live[slot] or nil
         reason = reasonOf(reason)
+        local who = M.who()
         -- Pending: a change made while the character's key is read waits for it, with the balance and time it had
         local job = pending[src]
         if job then
-            job.calls[#job.calls + 1] = { action, src, account, amount, reason, balance, Atlas.now() }
+            job.calls[#job.calls + 1] = { action, src, account, amount, reason, balance, Atlas.now(), who }
             return
         end
-        process(action, src, account, amount, reason, balance)
+        process(action, src, account, amount, reason, balance, nil, who)
     end
 end
 
@@ -289,6 +291,19 @@ local function itemsCatalog()
     for i = 1, #entries, 500 do
         Atlas.emit('items.catalog', { entries = { table.unpack(entries, i, math.min(i + 499, #entries)) } })
     end
+end
+
+--- Items of a player: ESX's own inventory by item name, for the item ledger; with ox_inventory, that adapter reads items instead.
+local function readItems(src)
+    local xPlayer = playerOf(src)
+    if not xPlayer then return nil end
+    local ok, list = pcall(xPlayer.getInventory, true)
+    if not ok or type(list) ~= 'table' then return nil end
+    local counts = {}
+    for name, count in pairs(list) do
+        if type(name) == 'string' and tonumber(count) then counts[name] = tonumber(count) end
+    end
+    return counts
 end
 
 -- Group: /setgroup changes the group in the state bag; the rank is read again once the change has been applied.
@@ -325,6 +340,11 @@ Atlas.registerFramework({
         assert(type(ESX) == 'table' and ESX.GetPlayerFromId, 'es_extended is not ready')
         -- Static export: a call for a source with no player returns nothing, and a missing export throws
         static = pcall(function() return exports.es_extended:RunStaticPlayerMethod(0, 'getAccounts', true) end)
+        -- Own inventory: ESX's item events carry the new total and name no script, so the item ledger follows these inventories
+        if GetResourceState('ox_inventory') == 'missing' then
+            Atlas.inventory = 'esx'
+            Atlas.itemLedger.use(readItems)
+        end
         -- Loaded characters: picks up characters already loaded when the agent starts
         CreateThread(function()
             -- Columns: read once here, so later logins know at once whether keys are timed

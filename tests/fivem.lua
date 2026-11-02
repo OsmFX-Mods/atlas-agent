@@ -10,8 +10,8 @@ local S              -- S: state of the current boot
 local MODULES = {
     'config.lua',
     'server/lib/common.lua', 'server/lib/clock.lua', 'server/lib/motion.lua',
-    'server/lib/shots.lua', 'server/lib/inventory.lua', 'server/lib/sandbox.lua',
-    'server/core.lua',
+    'server/lib/shots.lua', 'server/lib/inventory.lua', 'server/lib/sandbox.lua', 'server/lib/caller.lua',
+    'server/core.lua', 'server/attribution.lua', 'server/item_ledger.lua',
 }
 
 --- Hash: the same signed 32-bit hash that GetHashKey returns.
@@ -234,11 +234,16 @@ local function threads()
         function p.reject(self, e) if self.state == 'pending' then self.state, self.value = 'rejected', e end end
         return p
     end })
-    set('Citizen', { Await = function(p)
-        while p.state == 'pending' do coroutine.yield(50) end
-        if p.state == 'rejected' then error(p.value, 0) end
-        return p.value
-    end })
+    set('Citizen', {
+        Await = function(p)
+            while p.state == 'pending' do coroutine.yield(50) end
+            if p.state == 'rejected' then error(p.value, 0) end
+            return p.value
+        end,
+        ResultAsString = function() return 'string' end,
+        -- Stack: specs set fx.state.stack to what FORMAT_STACK_TRACE would answer
+        InvokeNative = function() return S.stack end,
+    })
 end
 
 --- Boot: installs the stubs and loads the core modules plus `opts.load`.

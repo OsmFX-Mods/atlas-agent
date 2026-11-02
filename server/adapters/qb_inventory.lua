@@ -1,6 +1,6 @@
 -- qb-inventory adapter: item events through qb-inventory listeners (built against 2.2.3; listeners came with it in 2026).
--- Listeners: run after the action, so they report what happened; older qb-inventory versions and forks have none,
--- and on those servers only the daily census counts items.
+-- Listeners: run after the action, so they report what happened and leave nothing for the item ledger; older qb-inventory
+-- versions and forks have none, and on those servers only the daily census counts items.
 -- Holders: trunks and gloveboxes are named by a hash of the plate, as in the census, never by the plate.
 
 local cfg = AtlasConfig
@@ -75,32 +75,52 @@ local onDropped = listen(function(_, d)
     }, src)
 end)
 
--- Removed: a give between players is told only here, with the receiving player's id in the reason.
+--- Who: the script behind an item change; qb-inventory names the resource it was called from, and the stack names it past the framework.
+local function whoOf(d)
+    local res, origin, kind = Atlas.attribution.who()
+    if not res and type(d.resource) == 'string' then res = d.resource end
+    return res, origin, kind
+end
+
+-- Removed: a give between players is told only here, with the receiving player's id in the reason; anything else a script took.
 local onRemoved = listen(function(_, d)
-    local target = type(d.reason) == 'string' and tonumber(d.reason:match(GIVE_TO))
     local it = type(d.item) == 'table' and d.item
-    if not target or not it or type(it.name) ~= 'string' then return end
-    local from, to = holder('player', d.fromId), holder('player', target)
-    Atlas.emit('item.move', {
-        item = it.name, count = tonumber(d.amount) or 1, from = from, to = to, action = 'give',
-        counterparty_char = Atlas.charOf(target),
-    }, srcOf(d.fromId))
+    if not it or type(it.name) ~= 'string' then return end
+    local reason = type(d.reason) == 'string' and d.reason or ''
+    local target = tonumber(reason:match(GIVE_TO))
+    if target then
+        local from, to = holder('player', d.fromId), holder('player', target)
+        Atlas.emit('item.move', {
+            item = it.name, count = tonumber(d.amount) or 1, from = from, to = to, action = 'give',
+            counterparty_char = Atlas.charOf(target),
+        }, srcOf(d.fromId))
+        return
+    end
+    local res, origin, kind = whoOf(d)
+    local from = holder(d.fromType, d.fromId)
+    Atlas.emit('item.remove', {
+        item = it.name, count = tonumber(d.amount) or 1, from = from, reason = reason ~= '' and reason:sub(1, 128) or nil, origin = origin, caller = kind,
+    }, from.kind == 'player' and srcOf(d.fromId) or nil, { res = res })
 end)
 
--- Added: items a script creates; fires for every AddItem, so it is off unless enabled.
+-- Added: an item that came out of nothing, as a script asked; a purchase or a give has its own event.
 local onAdded = listen(function(_, d)
     local it = type(d.item) == 'table' and d.item
     if not it or type(it.name) ~= 'string' then return end
     local reason = type(d.reason) == 'string' and d.reason or ''
     if SKIP_ADDED[reason] or reason:find('^Item given from ID #') then return end
+    local res, origin, kind = whoOf(d)
     local to = holder(d.toType, d.toId)
-    Atlas.emit('item.create', { item = it.name, count = tonumber(d.amount) or 1, to = to }, to.kind == 'player' and srcOf(d.toId) or nil)
+    Atlas.emit('item.create', {
+        item = it.name, count = tonumber(d.amount) or 1, to = to, reason = reason ~= '' and reason:sub(1, 128) or nil, origin = origin, caller = kind,
+    }, to.kind == 'player' and srcOf(d.toId) or nil, { res = res })
 end)
 
+-- Used: qb-inventory leaves the item in place and the item's own script removes it, which ItemRemoved reports, so a use takes nothing from the count.
 local onUsed = listen(function(_, d)
     local it = type(d.item) == 'table' and d.item
     if not it or type(it.name) ~= 'string' then return end
-    Atlas.emit('item.use', { item = it.name, count = 1 }, srcOf(d.source))
+    Atlas.emit('item.use', { item = it.name, count = 1, keeps_item = true }, srcOf(d.source))
 end)
 
 local onBought = listen(function(shopType, d)
@@ -149,6 +169,8 @@ Atlas.registerAdapter({
     resources = { 'qb-core', 'qb-inventory' },
     attach = function()
         local inv = exports['qb-inventory']
+        Atlas.attribution.addCore('qb-inventory', 'inventory')
+        Atlas.inventory = 'qb-inventory'
         for _, r in ipairs(registered) do pcall(function() inv:RemoveListener(r[1], r[2]) end) end
         registered = {}
         local function add(event, fn)
@@ -157,8 +179,9 @@ Atlas.registerAdapter({
             return ok
         end
         -- Listeners: a version without them throws on the first call, which leaves only the census
-        if not add('ItemMoved', onMoved) then
-            Atlas.log('qb-inventory has no listeners in this version, so only the daily census counts items')
+        Atlas.qbInventoryListens = add('ItemMoved', onMoved)
+        if not Atlas.qbInventoryListens then
+            Atlas.log('qb-inventory has no listeners in this version, so item changes are found by checking online players, with no script named')
         else
             add('ItemDropped', onDropped)
             add('ItemRemoved', onRemoved)

@@ -105,6 +105,10 @@ RegisterCommand('atlas_selftest', function(source, args)
             local ok = fw.selftestMoney(src)
             Wait(200)
             out('%s %s money hook fires (player %s)', mark(ok and Atlas.selftestMoneySeen), fw.name, src)
+            -- Attribution: the stack of that call should name this agent's own framework call, or say why not
+            local who = Atlas.selftestWho
+            out('%s money changes name their script (%s)', mark(who ~= nil),
+                who and ('%s, %s'):format(who.res, who.origin) or (AtlasConfig.attribute and 'no stack was available' or 'atlas:attribute is off'))
         end
 
         -- End to end: sends a marker event and waits up to 15 s for Atlas to confirm it
