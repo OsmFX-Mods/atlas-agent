@@ -43,7 +43,27 @@ With `none`, or when no supported framework is installed, the agent sends the ac
 
 Qbox and ESX also use `ox_inventory` shops, stashes and items when it is installed.
 
-**Which script moved the money.** No framework tells its money event which script called it, so `money.change` never names one for framework money. Only the `money` export below records the calling resource.
+**Which script moved the money.** No framework tells its money event which script called it, and inside the event `GetInvokingResource` is only the framework. The call stack still holds it, across resources, so the agent reads it (`server/attribution.lua`, the native `FORMAT_STACK_TRACE`, which adds 100 to 200 µs to a money or item call) and sends the script as `res`, its file and line as `origin`, and what kind of thing it was as `caller`:
+
+| `caller` | Meaning | `res` |
+| :--- | :--- | :--- |
+| `script` | A script asked the framework or inventory | That script |
+| `framework` | The framework acted by itself, such as its paycheck loop | The framework |
+| `inventory` | The inventory acted by itself, such as a move in its window | The inventory |
+| `staff_command` | A command in the framework or inventory, such as `/givemoney` or `/giveitem` | The framework or inventory |
+
+This needs no `ox_lib` and works the same on every framework, because only the stack is read. A resource that only carries a call, such as `ox_lib` or `oxmysql`, is read past (`attributionLibs` in `config.lua`). `atlas:attribute 0` turns it off. `atlas_selftest <player id>` shows it working.
+
+**Items.** What an inventory reports decides how complete item counts are, and they differ:
+
+| | Added by a script or staff | Removed by a script | Used | Moved, bought, crafted |
+| :--- | :--- | :--- | :--- | :--- |
+| `ox_inventory` | Seen, with the script (`createItem` hook) | No event exists, so the item ledger finds it | Seen when the use finishes, so a cancelled use does not count | Seen |
+| `qb-inventory` 2.2.3 on | Seen, with the script (`ItemAdded`) | Seen, with the script (`ItemRemoved`) | Seen; takes nothing by itself | Seen |
+| ESX's own inventory | Item ledger | Item ledger | Item ledger | Item ledger |
+| `qb-inventory` before 2.2.3, `ps-inventory` | Item ledger | Item ledger | Item ledger | Item ledger |
+
+The **item ledger** (`server/item_ledger.lua`) reads each online player's items in turn, once per `atlas:item_ledger_sec` (60 by default; 0 turns it off), and compares them with the item events of that time. What is left over goes out as `item.create` or `item.remove` marked `inferred`, with no script, because none is known. An inventory adapter takes part by giving it a reader with `Atlas.itemLedger.use(read, skip)` and reporting what it saw with `Atlas.itemLedger.note(src, item, delta)`. Offline characters are not read; the daily census still counts them.
 
 **Staff.** When a player joins, when a character starts and when their rank changes, the agent sends `player.staff` with the player's staff rank (or without one when it was taken away). Qbox and QBCore rank staff with ACE permissions, read in the order of `staffAces` in `config.lua`; ESX ranks them by group, and every group but `user` counts. Atlas uses the rank to mark teleports by staff, including noclip and `/tpm`, which run on the player's game and send no event.
 
@@ -55,7 +75,7 @@ Qbox and ESX also use `ox_inventory` shops, stashes and items when it is install
 - **Money types.** `cash`, `bank` and `crypto` count as themselves and `blackmoney` as `black_money`, which is reported in money changes only. Change the mapping in `config.lua` (`qbcore.moneyTypes`); a type left out keeps its own name.
 - **Deaths.** Any ambulance script that sets the `isdead` and `inlaststand` metadata works. `qb-ambulancejob` adds hospital respawns (not counted as revives) and check-ins with the bill.
 - **Deletion.** qb-core logs every deletion to `qb-log` once the rows are gone, whether or not `qb-log` runs. The agent takes that line, checks the character is gone and sends `character.delete`.
-- **Items.** `qb-inventory` 2.2.3 and later have listeners, which give moves, gives, drops, uses, purchases and shop and stash visits. Item additions by scripts fire for every added item, so they are off unless `atlas:qb_createitem` is `1`. Older versions and forks such as `ps-inventory` have no listeners; there the daily census counts items, read from the `inventories` table or the older `stashitems`, `trunkitems` and `gloveboxitems` tables. Trunks and gloveboxes are named by a hash of the plate.
+- **Items.** `qb-inventory` 2.2.3 and later have listeners, which give moves, gives, drops, uses, purchases, additions and removals by scripts, and shop and stash visits. Older versions and forks such as `ps-inventory` have no listeners; there the item ledger follows online players' `PlayerData.items` and the daily census counts everything, read from the `inventories` table or the older `stashitems`, `trunkitems` and `gloveboxitems` tables. Trunks and gloveboxes are named by a hash of the plate.
 - **Not covered.** Vehicle purchases (the next snapshot picks them up), and trunks and gloveboxes of old `ox_inventory` releases on QBCore.
 - **Table names.** Renamed tables can be set in `config.lua` (`qbcore.tables`).
 
@@ -130,6 +150,8 @@ A character id must stay with one character for good. If the framework hands a d
 
 Every account that sends changes must also be in the money snapshot, under the same type. Otherwise Atlas shows money it cannot explain.
 
+`Atlas.money.change` reads the stack itself. An adapter that holds a change for a moment, like ESX's, calls `Atlas.money.who()` inside the framework's event and passes the result to `Atlas.money.emit`. Nothing about the framework goes into the event: past the adapter, Atlas only sees the type, the amount and who asked.
+
 ### Data readers
 
 Set on `Atlas.frameworkData.<name>`. A reader that is missing skips that snapshot.
@@ -155,6 +177,14 @@ Set on `Atlas.frameworkData.<name>`. A reader that is missing skips that snapsho
 | `census` | An inventory kind such as stashes, with the same fields as a `census` reader kind. |
 
 `Atlas.loadConfig(resource, path, globals)` reads another resource's plain-data config file safely.
+
+### Inventories
+
+An inventory adapter is a normal adapter (`Atlas.registerAdapter`). It sets `Atlas.inventory` to its name for the heartbeat, calls `Atlas.attribution.addCore(name, 'inventory')` so the stack is read past it, sends `item.move`, `item.buy`, `item.use`, `item.craft`, `item.create` and `item.remove`, and gives the item ledger a reader when some of those have no event.
+
+### What a new framework needs
+
+Nothing outside its adapter files. Atlas Core stores and classifies normalized events and reads no framework's name: its classifier goes by the money type, the amount, `res`, `caller` and the player's job pay. Wording that Atlas Core knows, such as the built-in rule pack, is matched against reasons, whichever framework they came from.
 
 ### Tests
 

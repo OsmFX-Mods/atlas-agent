@@ -1,6 +1,7 @@
 local fx = load_module('tests/fivem.lua')
 
 local hooks, removed, items
+local held = {} -- held[src]: the slots GetInventoryItems answers for a player
 
 local function boot(convars)
     convars = convars or {}
@@ -10,6 +11,7 @@ local function boot(convars)
         removeHooks = function() removed = removed + 1 end,
         registerHook = function(_, name, fn, opts) hooks[name] = { fn = fn, opts = opts } end,
         Items = function() return items end,
+        GetInventoryItems = function(_, src) return held[src] end,
     }
     fx.boot({
         convars = convars, resources = { ox_inventory = 'started' }, provided = { ox_inventory = ox },
@@ -40,17 +42,16 @@ describe('ox_inventory hooks', function()
     it('registers the hooks it needs and clears older ones first', function()
         boot()
         expect(removed).toBe(1)
-        for _, name in ipairs({ 'swapItems', 'buyItem', 'craftItem', 'usingItem', 'openShop', 'openInventory' }) do
+        for _, name in ipairs({ 'swapItems', 'buyItem', 'craftItem', 'usingItem', 'createItem', 'openShop', 'openInventory' }) do
             expect(hooks[name] ~= nil).toBe(true)
         end
-        expect(hooks.createItem).toBeNil()
         expect(hooks.openInventory.opts.typeFilter).toEqual({ stash = true })
         fx.teardown()
     end)
 
-    it('registers createItem only when enabled and skips shop visits when switched off', function()
-        boot({ ['atlas:ox_createitem'] = 1, ['atlas:place_visits'] = 0 })
-        expect(hooks.createItem ~= nil).toBe(true)
+    it('leaves out createItem and shop visits when switched off', function()
+        boot({ ['atlas:ox_createitem'] = 0, ['atlas:place_visits'] = 0 })
+        expect(hooks.createItem).toBeNil()
         expect(hooks.openShop).toBeNil()
         expect(hooks.openInventory).toBeNil()
         fx.teardown()
@@ -100,14 +101,67 @@ describe('ox_inventory hooks', function()
         hooks.usingItem.fn({ source = 1, item = {} })
         expect(events('item.buy')[1].data.shop).toBe('General:3')
         expect(events('item.craft')[1].data.recipe).toBe('b1:lockpick')
+        -- A use counts when the game says it finished
+        expect(#events('item.use')).toBe(0)
+        TriggerEvent('ox_inventory:usedItem', 1, 'bandage', 3)
         local use = events('item.use')
         expect(#use).toBe(1)
         expect(use[1].data).toEqual({ item = 'bandage', count = 0.5 })
         fx.teardown()
     end)
 
+    it('does not count a use the player cancelled', function()
+        boot()
+        online(1)
+        hooks.usingItem.fn({ source = 1, item = { name = 'water' }, consume = 1 })
+        fx.advance(5000)
+        expect(#events('item.use')).toBe(0)
+        fx.teardown()
+    end)
+
+    it('names the script that created an item from the stack', function()
+        boot()
+        online(1, 'CHAR0001')
+        fx.state.stack = '> handler (@atlas-agent/server/adapters/ox_inventory.lua:20)\n> ref (@ox_inventory/modules/hooks/server.lua:80)\n> AddItem (@ox_inventory/modules/inventory/server.lua:1178)\n> fn (@job_fishing/server/main.lua:42)\n'
+        Atlas.attribution.addCore('ox_inventory', 'inventory')
+        hooks.createItem.fn({ item = { name = 'fish' }, inventoryId = 1, count = 3 })
+        local ev = events('item.create')[1]
+        expect(ev.res).toBe('job_fishing')
+        expect(ev.data.origin).toBe('server/main.lua:42')
+        expect(ev.data.caller).toBe('script')
+        fx.teardown()
+    end)
+
+    it('does not count an item twice when a shop or a craft made it', function()
+        boot()
+        online(1, 'CHAR0001')
+        fx.state.stack = '> ref (@ox_inventory/modules/hooks/server.lua:80)\n> Metadata (@ox_inventory/modules/items/server.lua:224)\n> fn (@ox_inventory/modules/shops/server.lua:246)\n'
+        hooks.createItem.fn({ item = { name = 'water' }, inventoryId = 1, count = 1 })
+        expect(#events('item.create')).toBe(0)
+        fx.teardown()
+    end)
+
+    it('marks a staff command, and reports what a script took through the ledger', function()
+        boot()
+        online(1, 'CHAR0001')
+        Atlas.attribution.addCore('ox_inventory', 'inventory')
+        fx.state.stack = '> ref (@ox_inventory/modules/hooks/server.lua:80)\n> fn (@ox_inventory/server.lua:630)\n> cb (@ox_lib/imports/addCommand/server.lua:90)\n'
+        hooks.createItem.fn({ item = { name = 'water' }, inventoryId = 1, count = 2 })
+        expect(events('item.create')[1].data.caller).toBe('staff_command')
+
+        held[1] = { { name = 'water', count = 5 }, { name = 'water', count = 1 }, { name = 'money', count = 900 } }
+        Atlas.itemLedger.check(1)
+        hooks.createItem.fn({ item = { name = 'water' }, inventoryId = 1, count = 2 }) -- seen, so not unexplained
+        held[1] = { { name = 'water', count = 3 }, { name = 'money', count = 100 } }
+        Atlas.itemLedger.check(1)
+        local rm = events('item.remove')
+        expect(#rm).toBe(1)
+        expect(rm[1].data).toEqual({ item = 'water', count = 5, from = { kind = 'player', id = 'CHAR0001' }, inferred = true })
+        fx.teardown()
+    end)
+
     it('records item creation for players and skips money items', function()
-        boot({ ['atlas:ox_createitem'] = 1 })
+        boot()
         online(1, 'CHAR0001')
         hooks.createItem.fn({ item = { name = 'water' }, inventoryId = 1, count = 2 })
         hooks.createItem.fn({ item = { name = 'money' }, inventoryId = 1, count = 500 })
@@ -119,7 +173,7 @@ describe('ox_inventory hooks', function()
     end)
 
     it('skips the money items a framework mirrors as accounts', function()
-        boot({ ['atlas:ox_createitem'] = 1 })
+        boot()
         online(1, 'CHAR0001')
         Atlas.framework = { name = 'esx', inventoryAccounts = { 'money', 'black_money' } }
         hooks.createItem.fn({ item = { name = 'black_money' }, inventoryId = 1, count = 500 })

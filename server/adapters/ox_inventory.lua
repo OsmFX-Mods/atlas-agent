@@ -36,41 +36,113 @@ local function srcOf(v)
     return (v and Atlas.players[v]) and v or nil
 end
 
+local ledger = Atlas.itemLedger
+
+--- Note move: tells the item ledger about one side of a move that holds a player, so it is not counted as unexplained.
+local function noteSide(holder, item, delta)
+    if holder.kind ~= 'player' then return end
+    local s = Atlas.charToSrc[holder.id] or tonumber(holder.id)
+    if s then ledger.note(s, item, delta) end
+end
+
 local onSwap = hook(function(p)
     local moves = inv.mapSwap(p, Atlas.charOf)
     if not moves then return end
     local src = srcOf(p.source)
-    for i = 1, #moves do Atlas.emit('item.move', moves[i], src) end
+    for i = 1, #moves do
+        local m = moves[i]
+        noteSide(m.from, m.item, -m.count)
+        noteSide(m.to, m.item, m.count)
+        Atlas.emit('item.move', m, src)
+    end
 end)
 
 local onBuy = hook(function(p)
     local data = inv.mapBuy(p)
-    if data then Atlas.emit('item.buy', data, srcOf(p.source)) end
+    if not data then return end
+    local src = srcOf(p.source)
+    if src then ledger.note(src, data.item, data.count) end
+    Atlas.emit('item.buy', data, src)
 end)
 
 local onCraft = hook(function(p)
     local data = inv.mapCraft(p)
-    if data then Atlas.emit('item.craft', data, srcOf(p.source)) end
+    if not data then return end
+    local src = srcOf(p.source)
+    if src then
+        for _, o in ipairs(data.out) do ledger.note(src, o[1], o[2]) end
+        for _, i in ipairs(data['in']) do ledger.note(src, i[1], -i[2]) end
+    end
+    Atlas.emit('item.craft', data, src)
 end)
 
+local using = {} -- using[src]: what the player started using; it only counts once the game says it finished
+
+-- Using: fires when a use starts, and the player can still cancel it, so nothing is counted yet.
 local onUse = hook(function(p)
     local item = type(p.item) == 'table' and p.item.name
-    if type(item) ~= 'string' then return end
-    -- Consume: item count consumed, or a fraction for durability items
-    Atlas.emit('item.use', { item = item, count = tonumber(p.consume) or 1 }, srcOf(p.source))
+    local src = srcOf(p.source)
+    if type(item) ~= 'string' or not src then return end
+    using[src] = { item = item, consume = tonumber(p.consume) or 1 }
 end)
 
+-- Used: the use finished. Consume: item count consumed, or a fraction for durability items.
+AddEventHandler('ox_inventory:usedItem', function(playerId, name)
+    if not Atlas.enabled or not Atlas.adapterActive(NAME) then return end
+    local src = srcOf(playerId)
+    local u = src and using[src]
+    if src then using[src] = nil end
+    if not src or type(name) ~= 'string' then return end
+    local consume = u and u.item == name and u.consume or 1
+    if consume >= 1 then ledger.note(src, name, -consume) end
+    Atlas.emit('item.use', { item = name, count = consume }, src)
+end)
+
+Atlas.onDrop(function(p) if p.src then using[p.src] = nil end end)
+
+--- Made elsewhere: an item made for a shop purchase or a craft has its own event, and a bridge only converts an old inventory.
+local function isCounted(frames)
+    for _, f in ipairs(frames) do
+        if f.res == NAME and (f.path:find('modules/shops/', 1, true) or f.path:find('modules/crafting/', 1, true) or f.path:find('modules/bridge/', 1, true)) then
+            return true
+        end
+    end
+    return false
+end
+
+-- Created: an item that came out of nothing; the stack names the script that asked for it, or a staff command.
 local onCreate = hook(function(p)
     local item = type(p.item) == 'table' and p.item.name
     if type(item) ~= 'string' or isAccountItem(item) then return end
+    local frames = Atlas.attribution.frames()
+    if isCounted(frames) then return end
+    local res, origin, kind = Atlas.attribution.pick(frames)
     local id = p.inventoryId
-    local kind = inv.kindFromId(id)
+    local where = inv.kindFromId(id)
+    local count = tonumber(p.count) or 1
+    local src = where == 'player' and srcOf(id) or nil
+    if src then ledger.note(src, item, count) end
     Atlas.emit('item.create', {
         item = item,
-        count = tonumber(p.count) or 1,
-        to = inv.ref(kind, id or '?', Atlas.charOf),
-    }, kind == 'player' and srcOf(id) or nil)
+        count = count,
+        to = inv.ref(where, id or '?', Atlas.charOf),
+        origin = origin,
+        caller = kind,
+    }, src, { res = res or (type(p.resource) == 'string' and p.resource) or nil })
 end)
+
+--- Items of a player: what they hold now, by item name, for the item ledger.
+local function readItems(src)
+    local items = exports.ox_inventory:GetInventoryItems(src)
+    if type(items) ~= 'table' then return nil end
+    local counts = {}
+    for _, it in pairs(items) do
+        if type(it) == 'table' and type(it.name) == 'string' then
+            counts[it.name] = (counts[it.name] or 0) + (tonumber(it.count) or 0)
+        end
+    end
+    return counts
+end
 
 local onOpenShop = hook(function(p)
     local ref = 'shop:' .. tostring(p.shopType or '?')
@@ -129,6 +201,14 @@ Atlas.registerAdapter({
             ox:registerHook('openInventory', onOpenStash, { print = false, typeFilter = { stash = true } })
         end
 
+        Atlas.attribution.addCore(NAME, 'inventory')
+        Atlas.inventory = NAME
+        ledger.use(readItems, isAccountItem)
+
         CreateThread(itemsCatalog)
+    end,
+    detach = function()
+        if Atlas.inventory == NAME then Atlas.inventory = nil end
+        ledger.use(nil)
     end,
 })

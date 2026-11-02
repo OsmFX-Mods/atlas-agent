@@ -58,8 +58,8 @@ The agent only reads facts that already exist on your server.
 | :--- | :--- |
 | **Movement** | Player positions, sampled every 3 seconds (every second near a fight). A player who stands still is reported with a still marker every 30 seconds instead of a stream of identical positions. |
 | **Combat** | Damage, deaths and explosions. Shots fired are reported by the client in aggregate and checked by the server. |
-| **Money** | Every cash and bank change with its reason, plus a snapshot of balances every 15 minutes. |
-| **Items** | Moves, uses, purchases and crafting from `ox_inventory`, moves, gives, uses and purchases from `qb-inventory`, plus a daily census of items. |
+| **Money** | Every cash and bank change with its reason and the script behind it, plus a snapshot of balances every 15 minutes. |
+| **Items** | Moves, uses, purchases, crafting and items scripts add, from `ox_inventory` and `qb-inventory`, what scripts remove, and a daily census of items. See [Frameworks](docs/frameworks.md#frameworks) for how complete each inventory is. |
 | **Vehicles and medical** | Ownership and transfers from `qbx_vehicles`, vehicle ownership from the database, check-ins and revives from `qbx_medical` and `qb-ambulancejob`, and deaths and revives from `esx_death` (or `esx_ambulancejob` on older ESX). |
 | **Sessions** | Joins, leaves, character changes, character creation and deletion, job and gang changes, resource restarts. |
 | **Staff** | Each player's staff rank (ACE permissions, or the ESX group), actions from `qbx_adminmenu` and `qb-adminmenu`, and txAdmin warnings, kicks and bans. |
@@ -81,6 +81,8 @@ The agent only reads facts that already exist on your server.
 - A framework: [Qbox](https://github.com/Qbox-project) (`qbx_core`), [QBCore](https://github.com/qbcore-framework) (`qb-core`) or [ESX Legacy](https://github.com/esx-framework/esx_core) (`es_extended`). Optionally [`ox_inventory`](https://github.com/overextended/ox_inventory) for items on Qbox and ESX; QBCore uses `qb-inventory`, and ESX also works with its built-in inventory. Without a framework the agent still sends sessions, positions and combat, and uses the player account as the character.
 - [`oxmysql`](https://github.com/overextended/oxmysql) for the money, item and vehicle snapshots. Optional.
 - [`qbx_vehicles`](https://github.com/Qbox-project/qbx_vehicles), [`qbx_medical`](https://github.com/Qbox-project/qbx_medical), `qb-ambulancejob`, `qb-banking` and [`Renewed-Banking`](https://github.com/Renewed-Scripts/Renewed-Banking) add vehicles, medical and bank accounts when present.
+
+**`ox_lib` is not required.** Money, items, scripts behind each change, positions, combat, sessions and every dashboard fed by them work without it. Pointing its logger at Atlas adds one thing: the text of script log lines on the Logs page. It sends to one service only, so if you already use another, keep it and lose nothing else.
 
 Resources can start in any order. The agent attaches to each one as it starts. If two frameworks are installed, the first to start is used; see [Frameworks](docs/frameworks.md) to choose.
 
@@ -159,8 +161,10 @@ Everything has a sensible default. The common settings are convars: add them to 
 | `atlas:snapshots` | `1` | Money, account and item snapshots from the database (needs `oxmysql`). |
 | `atlas:census_hour` | `5` | Hour of day (server time) for the daily item and vehicle census. |
 | `atlas:place_visits` | `1` | Record shop and stash visits as places. |
-| `atlas:ox_createitem` | `0` | Record every `ox_inventory` item creation. Noisy, so off by default. |
-| `atlas:qb_createitem` | `0` | Record every item a script adds through `qb-inventory`. Noisy, so off by default. |
+| `atlas:attribute` | `1` | Name the script behind each money and item change, from the call stack. Adds 100 to 200 µs to a money or item call. |
+| `atlas:ox_createitem` | `1` | Record items that scripts and staff create through `ox_inventory`. Without it, Atlas sees items leave the city but never arrive. |
+| `atlas:qb_createitem` | `1` | The same for `qb-inventory`. |
+| `atlas:item_ledger_sec` | `60` | Seconds between checks of one online player's items against the item events, which finds what scripts removed. `0` turns it off. |
 | `atlas:census_full_weekday` | `0` | Weekday of the full item census, 0 for Sunday. Other days send changes only. |
 | `atlas:spool_mb` | `200` | Disk space for events kept while Atlas is unreachable. |
 | `atlas:console` | `1` | Capture script errors and warnings from the server console. |
