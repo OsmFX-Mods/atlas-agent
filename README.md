@@ -16,7 +16,7 @@
 
 This repository is the **Atlas agent**, the small resource you install on your game server. It watches what happens in your city and sends it to your Atlas dashboard. The heavy lifting runs on the Atlas side, so the agent stays light.
 
-> **Early access.** Atlas is free and open by invitation, for Qbox, QBCore and ESX servers with 5 to 25 players. The agent needs a token from an Atlas dashboard to do anything, so [request access on the Atlas page](https://osmfxmods.com/atlas) first.
+> **Early access.** Atlas is free and open by invitation, for Qbox, QBCore and ESX servers, from a handful of players up to 175, the largest server we have run so far. The agent needs a token from an Atlas dashboard to do anything, so [request access on the Atlas page](https://osmfxmods.com/atlas) first.
 
 ---
 
