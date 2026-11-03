@@ -44,7 +44,7 @@ end
 
 --- Flip: ambulancejob sets the isDead state; the matching client event arrives with it, as it does on a real server.
 local function flip(src, dead, signal)
-    if signal then fx.net(signal, src, signal == 'esx:triggerServerCallback' and 'esx_ambulancejob:removeItemsAfterRPDeath' or {}) end
+    if signal then fx.client(signal, src, signal == 'esx:triggerServerCallback' and 'esx_ambulancejob:removeItemsAfterRPDeath' or {}) end
     state.dead[src] = dead
     fx.stateBag(src, 'isDead', dead)
     fx.advance(AtlasConfig.esx.deathSettleMs + 100)
@@ -95,7 +95,7 @@ describe('esx ambulancejob deaths', function()
     it('ignores a death event older than the signal time', function()
         boot()
         login(4)
-        fx.net('esx:onPlayerDeath', 4, {})
+        fx.client('esx:onPlayerDeath', 4, {})
         fx.advance(AtlasConfig.esx.deathSignalMs + 1000)
         flip(4, true)
         expect(#events('combat.death')).toBe(0)
@@ -105,12 +105,20 @@ describe('esx ambulancejob deaths', function()
     it('reports one death when the state is set twice', function()
         boot()
         login(4)
-        fx.net('esx:onPlayerDeath', 4, {})
+        fx.client('esx:onPlayerDeath', 4, {})
         state.dead[4] = true
         fx.stateBag(4, 'isDead', true)
         fx.stateBag(4, 'isDead', true)
         fx.advance(AtlasConfig.esx.deathSettleMs + 100)
         expect(#events('combat.death')).toBe(1)
+        fx.teardown()
+    end)
+
+    it('accepts both client events as net events', function()
+        boot()
+        login(4)
+        fx.client('esx:onPlayerDeath', 4, {})
+        fx.client('esx:triggerServerCallback', 4, 'esx_ambulancejob:removeItemsAfterRPDeath', 1)
         fx.teardown()
     end)
 

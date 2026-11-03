@@ -205,7 +205,8 @@ local function events()
         list[#list + 1] = fn
     end)
     set('RegisterNetEvent', function(name, fn)
-        _G.AddEventHandler(name, fn)
+        S.netEvents[name] = true
+        if fn then _G.AddEventHandler(name, fn) end
     end)
     set('TriggerEvent', function(name, ...)
         S.triggered[#S.triggered + 1] = { name = name, args = table.pack(...) }
@@ -254,7 +255,7 @@ function fx.boot(opts)
     S = {
         gt = 10000, wall = 1790000000, resource = opts.resource or 'atlas-agent',
         convars = opts.convars or {}, resources = opts.resources or {},
-        players = {}, handlers = {}, triggered = {}, threads = {}, printed = {},
+        players = {}, handlers = {}, netEvents = {}, triggered = {}, threads = {}, printed = {},
         exported = {}, provided = opts.provided or {}, commands = {}, kvp = {}, files = opts.files or {}, invoker = nil,
         bagHandlers = {},
     }
@@ -329,6 +330,12 @@ function fx.net(name, src, ...)
     _G.source = src
     for _, fn in ipairs(S.handlers[name] or {}) do fn(...) end
     _G.source = nil
+end
+
+--- Client: like Net, but only for events the script registered with RegisterNetEvent; the server refuses any other from a client.
+function fx.client(name, src, ...)
+    if not S.netEvents[name] then error('event ' .. name .. ' was not safe for net', 2) end
+    return fx.net(name, src, ...)
 end
 
 --- State bag: sets a key on a player's state bag and runs the change handlers for it, like Player(src).state:set on the server.
