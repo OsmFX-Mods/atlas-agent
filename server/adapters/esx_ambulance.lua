@@ -30,12 +30,13 @@ local function seen(src, kind)
 end
 
 -- Death: the client reports it to the server when the character goes down.
-AddEventHandler('esx:onPlayerDeath', function()
+-- Both events come from clients, so they are registered as net events; otherwise the server logs "not safe for net" on every one.
+RegisterNetEvent('esx:onPlayerDeath', function()
     if active() then mark(source, 'death') end
 end)
 
 -- Respawn: a hospital respawn goes through this callback; a revive does not.
-AddEventHandler('esx:triggerServerCallback', function(name)
+RegisterNetEvent('esx:triggerServerCallback', function(name)
     if active() and name == 'esx_ambulancejob:removeItemsAfterRPDeath' then mark(source, 'respawn') end
 end)
 
