@@ -48,6 +48,7 @@ server_scripts {
     'server/adapters/qb_ambulancejob.lua',
     'server/adapters/qb_adminmenu.lua',
     'server/adapters/esx_data.lua',
+    'server/adapters/esx_v1.lua',
     'server/adapters/esx.lua',
     'server/adapters/esx_death.lua',
     'server/adapters/esx_ambulance.lua',

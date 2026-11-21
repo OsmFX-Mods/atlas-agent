@@ -49,7 +49,7 @@ describe('manifest load order', function()
         for _, path in ipairs(manifestScripts()) do listed[path] = true end
         for _, path in ipairs({
             'server/sources.lua', 'server/framework.lua', 'server/characters.lua', 'server/staff.lua', 'server/money.lua',
-            'server/adapters/qbox_data.lua', 'server/adapters/esx.lua', 'server/adapters/esx_data.lua',
+            'server/adapters/qbox_data.lua', 'server/adapters/esx.lua', 'server/adapters/esx_data.lua', 'server/adapters/esx_v1.lua',
             'server/adapters/esx_death.lua', 'server/adapters/ox_inventory_data.lua',
         }) do
             expect(listed[path]).toBe(true)

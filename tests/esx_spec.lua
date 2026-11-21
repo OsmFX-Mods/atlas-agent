@@ -51,7 +51,7 @@ local function boot(over)
         } },
         load = {
             'server/db.lua', 'server/adapters/detect.lua', 'server/sources.lua', 'server/framework.lua',
-            'server/characters.lua', 'server/staff.lua', 'server/money.lua', 'server/adapters/esx_data.lua', 'server/adapters/esx.lua',
+            'server/characters.lua', 'server/staff.lua', 'server/money.lua', 'server/adapters/esx_data.lua', 'server/adapters/esx_v1.lua', 'server/adapters/esx.lua',
             'server/adapters/esx_death.lua',
         },
     })
@@ -120,7 +120,7 @@ describe('esx adapter attach', function()
             convars = { ['atlas:token'] = 'atl_live_x', ['atlas:framework'] = 'qbox' }, resources = { es_extended = 'started' },
             provided = { es_extended = { getSharedObject = function() return {} end } },
             load = { 'server/db.lua', 'server/adapters/detect.lua', 'server/sources.lua', 'server/framework.lua',
-                'server/characters.lua', 'server/staff.lua', 'server/money.lua', 'server/adapters/esx_data.lua', 'server/adapters/esx.lua' },
+                'server/characters.lua', 'server/staff.lua', 'server/money.lua', 'server/adapters/esx_data.lua', 'server/adapters/esx_v1.lua', 'server/adapters/esx.lua' },
         })
         fx.advance(200)
         expect(Atlas.adapterActive('esx')).toBe(false)
@@ -136,7 +136,7 @@ describe('esx adapter attach', function()
                 return { GetPlayerFromId = function(src) return state.players[src] end }
             end } },
             load = { 'server/db.lua', 'server/adapters/detect.lua', 'server/sources.lua', 'server/framework.lua',
-                'server/characters.lua', 'server/staff.lua', 'server/money.lua', 'server/adapters/esx_data.lua', 'server/adapters/esx.lua' },
+                'server/characters.lua', 'server/staff.lua', 'server/money.lua', 'server/adapters/esx_data.lua', 'server/adapters/esx_v1.lua', 'server/adapters/esx.lua' },
         })
         state = { players = {}, dead = {} }
         fx.addPlayer(4, { ped = { x = 1.0, y = 1.0, z = 1.0 } })
@@ -574,7 +574,7 @@ describe('esx death', function()
                 return { GetPlayerFromId = function(src) return state.players[src] end }
             end } },
             load = { 'server/db.lua', 'server/adapters/detect.lua', 'server/sources.lua', 'server/framework.lua',
-                'server/characters.lua', 'server/staff.lua', 'server/money.lua', 'server/adapters/esx_data.lua', 'server/adapters/esx.lua',
+                'server/characters.lua', 'server/staff.lua', 'server/money.lua', 'server/adapters/esx_data.lua', 'server/adapters/esx_v1.lua', 'server/adapters/esx.lua',
                 'server/adapters/esx_death.lua' },
         })
         state = { players = {}, dead = {} }

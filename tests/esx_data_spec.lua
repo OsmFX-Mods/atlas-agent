@@ -14,7 +14,7 @@ local function boot(resources, files, convars)
         provided = { es_extended = { getSharedObject = function() return ESX end } },
         load = {
             'server/db.lua', 'server/adapters/detect.lua', 'server/sources.lua', 'server/framework.lua',
-            'server/characters.lua', 'server/staff.lua', 'server/money.lua', 'server/adapters/esx_data.lua', 'server/adapters/esx.lua',
+            'server/characters.lua', 'server/staff.lua', 'server/money.lua', 'server/adapters/esx_data.lua', 'server/adapters/esx_v1.lua', 'server/adapters/esx.lua',
             'server/adapters/ox_inventory_data.lua', 'server/adapters/renewed_banking.lua', 'server/snapshots.lua', 'server/places.lua',
         },
     })

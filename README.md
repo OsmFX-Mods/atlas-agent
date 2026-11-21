@@ -194,7 +194,7 @@ If Atlas cannot be reached, events are kept on disk and sent in order once the c
 | `staffAces` | `god`, `admin`, `mod`, `command` (as admin) | ACE permissions that make a player staff and the rank each means, highest first. ESX uses the player's group instead. |
 | `placeRadius` | per kind | Size in metres of each kind of place: `shop`, `garage`, `hospital`, `police`, `bank` and `custom`. |
 | `qbox.tables` | `players`, `player_vehicles`, `properties` | Qbox table names, for servers that renamed them. |
-| `esx.tables` | `users`, `owned_vehicles`, `vehicles`, `items`, `addon_account_data` | ESX table names, for servers that renamed them. |
+| `esx.tables` | `users`, `owned_vehicles`, `vehicles`, `items`, `addon_account_data`, `user_accounts`, `user_inventory`, `jobs` | ESX table names, for servers that renamed them. The last three are used on ESX v1 only. |
 | `esx.accounts` | `money` as cash, `bank` as bank, `black_money` as its own type | Money type per ESX account. Cash, bank and crypto are included in money snapshots; any other name is reported in money changes only. Accounts left out are not tracked. |
 | `esx.deathSettleMs` | `500` | Older ESX: how long to wait after the dead state changes for the matching client event. |
 | `esx.deathSignalMs` | `5000` | Older ESX: how recent a client death or respawn event must be to count. |
