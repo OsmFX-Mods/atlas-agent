@@ -13,11 +13,13 @@ local SYNC_REASON = 'Sync account with item' -- SYNC_REASON: what ESX reports wh
 local data = Atlas.frameworkData.esx
 local ESX -- ESX: the shared object of es_extended, read when the adapter attaches
 local static = false -- static: true when es_extended can run one xPlayer method by export (newer versions, 1.13 on at least)
+local v1 = false -- v1: true on the older ESX that esx_v1.lua covers; everything else here then reads players through it
 
 local function active() return Atlas.enabled and Atlas.adapterActive(NAME) end
 
 --- Player: the live xPlayer of a source, or nil.
 local function playerOf(src)
+    if v1 then return data.v1.player(src) end
     local ok, x = pcall(ESX.GetPlayerFromId, src)
     return ok and type(x) == 'table' and x or nil
 end
@@ -31,6 +33,10 @@ end
 
 --- Live balances: the current balances of a source by money type; the export avoids copying the whole xPlayer on every money event.
 local function liveBalances(src)
+    if v1 then
+        local accounts = data.v1.accounts(src)
+        return accounts and data.slots(accounts)
+    end
     if not static then
         local xPlayer = playerOf(src)
         return xPlayer and balances(xPlayer)
@@ -68,10 +74,11 @@ local function charStart(src, xPlayer, key, isNew, resumed)
         duty = job.onDuty == true,
         jobPayment = tonumber(job.grade_salary),
         money = balances(xPlayer),
-        dead = isDead(src),
+        dead = isDead(src) or xPlayer.loggedOutDead == true,
         isNew = isNew == true,
         resumed = resumed,
     })
+    if p and xPlayer.loggedOutDead == true then p.state = { isdead = true } end -- v1: down already, so the death its client reports again is not new
     if p and owned[src] then owned[src][xPlayer.identifier] = { key = p.char, name = p.charName or '' } end
 end
 
@@ -82,7 +89,7 @@ local function begin(src, xPlayer, isNew, resumed)
     local identifier = xPlayer.identifier
     if type(identifier) ~= 'string' or identifier == '' then return end
     idents[src] = identifier
-    if data.keys.timed(true) == false or not Atlas.db.available() then return charStart(src, xPlayer, identifier, isNew, resumed) end
+    if (not v1 and data.keys.timed(true) == false) or not Atlas.db.available() then return charStart(src, xPlayer, identifier, isNew, resumed) end
     local job = { identifier = identifier, calls = {} }
     pending[src] = job
     CreateThread(function()
@@ -92,10 +99,12 @@ local function begin(src, xPlayer, isNew, resumed)
             if key or pending[src] ~= job then break end
             Wait(1000)
         end
+        local identity = v1 and pending[src] == job and data.v1.identity(identifier) or nil -- identity: v1 keeps the name and dead state in the database only
         if pending[src] ~= job then return end
         pending[src] = nil
         local fresh = playerOf(src)
         if not fresh or fresh.identifier ~= identifier then idents[src] = nil return end
+        if identity then fresh.variables, fresh.loggedOutDead = identity, identity.dead end
         if not key then
             Atlas.warn('esx: could not read the key of %s, so it is sent by its identifier', identifier)
             key = identifier
@@ -114,8 +123,10 @@ end
 
 -- playerLoaded: server-side after login or character selection; emits session.char_start, plus character.create for new characters.
 AddEventHandler('esx:playerLoaded', function(src, xPlayer, isNew)
-    if not active() or type(xPlayer) ~= 'table' then return end
+    if not active() then return end
     src = tonumber(src)
+    if v1 then xPlayer = src and playerOf(src) end -- v1: read through esx_v1.lua, which evens out the xPlayer of these versions
+    if type(xPlayer) ~= 'table' then return end
     if not src or idents[src] == xPlayer.identifier then return end
     finish(src, 'switch')
     begin(src, xPlayer, isNew, false)
@@ -136,6 +147,7 @@ end)
 -- Character deletion: esx_multicharacter deletes every row of the slot's identifier, after which the slot can be filled again.
 -- Check: the character must belong to the player's account, and after a short wait its row must be gone or hold another character.
 local function fetchOwned(src)
+    if v1 then return end -- v1: one users row per player, with no character slots to delete
     local p = Atlas.players[src]
     if not p or not Atlas.db.available() then return end
     local full = p.ids[GetConvar('esx:identifier', 'license')]
@@ -324,7 +336,8 @@ Atlas.registerFramework({
     inventoryAccounts = { 'money', 'black_money' },
     -- Staff rank: ESX keeps the player's group in their state bag; user is everyone without a rank
     staffRole = function(src)
-        local group = Player(src).state.group
+        local group
+        if v1 then group = data.v1.group(src) else group = Player(src).state.group end
         if type(group) == 'string' and group ~= 'user' then return group end
     end,
     -- Selftest: setting the bank to its current balance reaches the money hook without changing anything
@@ -338,8 +351,12 @@ Atlas.registerFramework({
         -- Probe: an ESX that is not ready fails the check, which makes detect.lua retry
         ESX = data.shared()
         assert(type(ESX) == 'table' and ESX.GetPlayerFromId, 'es_extended is not ready')
+        -- Version: ESX v1 reads players and saved data through esx_v1.lua; ESX Legacy keeps the readers from esx_data.lua
+        v1 = data.v1.detect()
+        if v1 then data.v1.use(ESX) else data.v1.stop() end
+        Atlas.log('es_extended read as %s', v1 and 'ESX v1' or 'ESX Legacy')
         -- Static export: a call for a source with no player returns nothing, and a missing export throws
-        static = pcall(function() return exports.es_extended:RunStaticPlayerMethod(0, 'getAccounts', true) end)
+        static = not v1 and pcall(function() return exports.es_extended:RunStaticPlayerMethod(0, 'getAccounts', true) end)
         -- Own inventory: ESX's item events carry the new total and name no script, so the item ledger follows these inventories
         if GetResourceState('ox_inventory') == 'missing' then
             Atlas.inventory = 'esx'

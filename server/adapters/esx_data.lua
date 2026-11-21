@@ -38,6 +38,7 @@ end
 
 -- Columns: what the users table offers differs between setups, so it is looked up once and kept.
 local columns -- columns: { changed, created = quoted column name or false, names = true when first and last name columns exist }, nil until read
+local plainKeys = false -- plainKeys: true on ESX v1, whose characters are keyed by identifier whatever columns users has
 
 --- Columns: the users columns Atlas can use; nil after a database error, so the next call asks again.
 local function checkColumns()
@@ -58,7 +59,7 @@ local function checkColumns()
     end
     columns = {
         changed = column(cfg.esx.changedColumn, true),
-        created = column(cfg.esx.createdColumn, false),
+        created = not plainKeys and column(cfg.esx.createdColumn, false),
         names = extra.firstname ~= nil and extra.lastname ~= nil,
     }
     Atlas.log('esx characters are keyed by %s', columns.created and 'identifier and creation time'
@@ -93,6 +94,11 @@ local function count(since)
 end
 
 local keys = {}
+
+--- Plain: turns identifier-only keys on or off; a change clears the columns read under the old setting.
+function keys.plain(on)
+    if plainKeys ~= on then plainKeys, columns = on, nil end
+end
 
 --- Timed: whether characters get timed keys (true), plain identifiers (false), or nil while the database cannot tell.
 --- Known only: answers from what was already read, without a query, so an event handler never waits on the database.

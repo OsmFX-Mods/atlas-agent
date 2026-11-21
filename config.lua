@@ -102,6 +102,8 @@ AtlasConfig = {
         tables = {
             characters = 'users', vehicles = 'owned_vehicles', vehiclePrices = 'vehicles',
             items = 'items', societyAccounts = 'addon_account_data',
+            -- ESX v1 only: accounts and items per player, and the job list
+            userAccounts = 'user_accounts', inventory = 'user_inventory', jobs = 'jobs',
         },
         -- Death events: esx_ambulancejob (ESX before 1.16) sets the dead state before its matching event arrives, so a change waits this long
         -- for it (ms), and an event counts for a death or respawn if it came within the signal time (ms)

@@ -9,6 +9,7 @@ The agent reads a server through one **framework adapter**. The adapter turns th
 | Qbox | `qbx_core` | 1.23.0 |
 | QBCore | `qb-core` | 1.3.0, also checked against the 2022 to 2025 releases |
 | ESX Legacy | `es_extended` | 1.16.0, also checked against 1.13 to 1.15 (the events used are the same back to 1.9.4) |
+| ESX v1 | `es_extended` | 1.1.0 to early 1.2.0 (up to March 2020). Money changes need a small patch, see [ESX v1 notes](#esx-v1-notes) |
 
 `ox_inventory` works with Qbox and ESX; QBCore uses `qb-inventory`. Other framework resources start in any order; the agent attaches to each one as it starts.
 
@@ -89,6 +90,61 @@ The **item ledger** (`server/item_ledger.lua`) reads each online player's items 
 - **Deletion.** When `esx_multicharacter` is asked to delete a character, the agent checks a few seconds later that the slot is empty (or holds a different character) and sends `character.delete`.
 - **Not covered.** ESX sends no server event when a vehicle is bought, so it shows up in the next snapshot instead.
 - **Table names.** Renamed tables can be set in `config.lua` (`esx.tables`, `qbox.tables`).
+
+### ESX v1 notes
+
+ESX from before accounts moved to JSON in `users` (1.1.0 to early 1.2.0) needs no setting: the agent sees that `users` has no `accounts` column and switches by itself. Sessions, jobs, balances in snapshots, the item census and ledger, vehicles, deaths and staff ranks work on a stock install, with two exceptions.
+
+**Database.** Stock ESX v1 uses `mysql-async`, but the agent reads the database through `oxmysql` only. Without `oxmysql` started there are no snapshots, saved character names or saved dead states. If your server still runs `mysql-async`, we recommend switching: `oxmysql` is actively maintained and supports the `mysql-async` syntax and exports, so existing queries keep working.
+
+To switch:
+
+1. Install [`oxmysql`](https://github.com/overextended/oxmysql/releases/latest). It reads the same `mysql_connection_string`, so that setting can stay.
+2. In `server.cfg`, replace `ensure mysql-async` with `ensure oxmysql`, and keep it before `es_extended`.
+3. In the `fxmanifest.lua` or `__resource.lua` of every resource that loads it, replace `@mysql-async/lib/MySQL.lua` with `@oxmysql/lib/MySQL.lua`. A dependency on `mysql-async` can stay, because `oxmysql` also provides that name.
+
+**Money changes.** Stock ESX v1 tells only the player's client about a money change, so the server sees no event and `money.change` is not sent. Balances stay correct, because every money snapshot reads them again, but there is no record of each transaction or the script behind it, and `atlas_selftest` reports the money hook as failing.
+
+To turn `money.change` on, edit `es_extended/server/classes/player.lua`. In the three account methods, add `reason` as the last parameter, then add one line right after the line that sends `esx:setAccountMoney` to the client:
+
+| Method | Line to add |
+| :--- | :--- |
+| `self.setAccountMoney` | `TriggerEvent('esx:setAccountMoney', self.source, accountName, newMoney, reason)` |
+| `self.addAccountMoney` | `TriggerEvent('esx:addAccountMoney', self.source, accountName, ESX.Math.Round(money), reason)` |
+| `self.removeAccountMoney` | `TriggerEvent('esx:removeAccountMoney', self.source, accountName, ESX.Math.Round(money), reason)` |
+
+For example:
+
+```lua
+self.addAccountMoney = function(accountName, money, reason)
+    if money > 0 then
+        local account = self.getAccount(accountName)
+
+        if account then
+            local newMoney = account.money + ESX.Math.Round(money)
+            account.money = newMoney
+
+            self.triggerEvent('esx:setAccountMoney', account)
+            TriggerEvent('esx:addAccountMoney', self.source, accountName, ESX.Math.Round(money), reason)
+        end
+    end
+end
+```
+
+That is the whole change on early 1.2.0, where `addMoney`, `removeMoney` and `setMoney` already go through these methods. Do not add events to those three there, or each change is counted twice.
+
+On 1.1.0, the parameter is called `acc`, so use `acc` instead of `accountName` in the lines above. Cash and the bank helpers also skip the account methods on that version, so add one line right after each of these calls:
+
+| Call | Line to add |
+| :--- | :--- |
+| `self.player.setMoney(money)` | `TriggerEvent('esx:setAccountMoney', self.source, 'money', money)` |
+| `self.player.addMoney(money)` | `TriggerEvent('esx:addAccountMoney', self.source, 'money', money)` |
+| `self.player.removeMoney(money)` | `TriggerEvent('esx:removeAccountMoney', self.source, 'money', money)` |
+| `self.player.setBankBalance(money)` | `TriggerEvent('esx:setAccountMoney', self.source, 'bank', money)` |
+| `self.player.addBank(money)` | `TriggerEvent('esx:addAccountMoney', self.source, 'bank', money)` |
+| `self.player.removeBank(money)` | `TriggerEvent('esx:removeAccountMoney', self.source, 'bank', money)` |
+
+Restart `es_extended`, then run `atlas_selftest <player id>` with a player online: the money hook should now pass. Scripts written for these versions pass no reason, so their changes arrive with the reason `unknown`, and the agent still names the script from the call stack. An update of `es_extended` overwrites this file, so apply the change again afterwards.
 
 ## Servers with their own framework
 
