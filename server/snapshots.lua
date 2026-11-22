@@ -51,7 +51,10 @@ local function moneySnapshot(mode)
 
     local count = fromDb and reader.count(since) or 0
 
-    -- Online players: always sent with live balances, since the database lags until the framework saves
+    -- Online players: always sent with live balances, since the database lags until the framework saves.
+    -- Every page carries the moment those balances were read: stamped when sent, a payment made while the pages were
+    -- going out was inside the interval but not in its balance, and Atlas saw money vanish and come back (audit 2026-11-22).
+    local readAt = Atlas.now()
     local online, onlineN = {}, 0
     for char, m in pairs(Atlas.onlineBalances and Atlas.onlineBalances() or {}) do
         online[char] = { m.cash or 0, m.bank or 0, m.crypto or 0 }
@@ -93,7 +96,7 @@ local function moneySnapshot(mode)
         Atlas.emit('money.snapshot', {
             snapshot_id = id, mode = mode, since_ts = toMs(since),
             rows = out, page = page, pages = pages, final = done or nil,
-        })
+        }, nil, { at = readAt })
         if done then break end
         Wait(100)
     end

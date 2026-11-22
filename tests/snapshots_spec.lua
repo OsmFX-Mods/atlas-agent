@@ -91,6 +91,9 @@ describe('money snapshot', function()
         expect(seen).toEqual({ 'AAA', 'BBB', 'CCC', 'DDD', 'EEE' })
         expect(pages[1].data.rows[1]).toEqual({ 'AAA', 1, 10, 0 })
         expect(pages[1].data.snapshot_id == pages[3].data.snapshot_id).toBe(true)
+        -- Every page carries the moment the balances were read, not when it was sent: the pages go out with waits in
+        -- between, and a payment in that gap must not fall between the reading and its timestamp.
+        expect(pages[1].ts == pages[3].ts).toBe(true)
         fx.teardown()
     end)
 
