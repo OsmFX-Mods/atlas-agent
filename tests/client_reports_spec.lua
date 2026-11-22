@@ -105,6 +105,27 @@ describe('client shot reports', function()
         fx.teardown()
     end)
 
+    it('accepts a living ped whose framework still says dead, and a player in last stand', function()
+        boot()
+        local ped = shooter()
+        local p = join(1, ped)
+        p.dead = true
+        p.state = { isdead = true }
+        fx.net('atlas:c:shots', 1, report(ped))
+        expect(#emitted('combat.shots')).toBe(1)
+        fx.teardown()
+
+        boot()
+        local ped2 = shooter()
+        local p2 = join(2, ped2)
+        p2.dead = true
+        p2.state = { inlaststand = true }
+        fx.net('atlas:c:shots', 2, report(ped2))
+        expect(#emitted('combat.shots')).toBe(1)
+        expect(Atlas.drops.shots_dead or 0).toBe(0)
+        fx.teardown()
+    end)
+
     it('rejects a second report inside five seconds and accepts it afterwards', function()
         boot()
         local ped = shooter()

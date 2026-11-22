@@ -50,11 +50,14 @@ RegisterNetEvent('atlas:c:shots', function(payload)
 
     local positions = Atlas.recentPositions(p)
     local ped = GetPlayerPed(src)
-    local alive = not p.dead
+    -- Alive: the game's own health of the ped when the server sees it. The framework's dead flag is only a fallback,
+    -- and last stand is not dead (a downed player can shoot): on one ESX server the flag never cleared and every
+    -- shot report was refused as "dead" (audit 2026-11-22).
+    local alive = not (p.state and p.state.isdead == true)
     if ped and ped ~= 0 then
         local c = GetEntityCoords(ped)
         positions[#positions + 1] = { c.x, c.y }
-        if GetEntityHealth(ped) <= 0 then alive = false end
+        alive = GetEntityHealth(ped) > 0
     end
 
     local ok, reason, clean = shots.validate(payload, {

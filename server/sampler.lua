@@ -27,7 +27,9 @@ local function sampleOne(src, gt, high)
     if not ped or ped == 0 then return false end
     local c = GetEntityCoords(ped)
     local x, y, z = c.x, c.y, c.z
-    if x == 0.0 and y == 0.0 then return false end -- Skipped while the player is still loading
+    -- Skipped while the player is still loading: the ped stands at the map origin, give or take a fraction of a metre
+    -- (an exact-zero check let 16,500 such samples through, audit 2026-11-22)
+    if x > -1.0 and x < 1.0 and y > -1.0 and y < 1.0 then return false end
 
     lastAt[src] = gt
     local nowMs = Atlas.now()
