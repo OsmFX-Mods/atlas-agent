@@ -238,7 +238,7 @@ Atlas.frameworkData.qbcore = {
         local shared = obj and type(obj.Shared) == 'table' and obj.Shared or {}
         for name in pairs(type(shared.Jobs) == 'table' and shared.Jobs or {}) do jobs[name] = true end
         for name in pairs(type(shared.Gangs) == 'table' and shared.Gangs or {}) do
-            if name ~= 'none' then gangs[name] = true end
+            if AtlasLib.common.gangName(name) then gangs[name] = true end
         end
         return jobs, gangs
     end,

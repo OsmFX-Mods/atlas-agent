@@ -73,13 +73,13 @@ CreateThread(function()
     if cfg.itemLedgerSec <= 0 then return end
     local turn = 0
     while true do
+        Wait(math.max(50, math.floor(cfg.itemLedgerSec * 1000 / math.max(#Atlas.playerList, 1))))
+        -- Length: read after the wait, since players leave during it and a turn modulo an empty list is an error
         local list = Atlas.playerList
         local count = #list
-        Wait(math.max(50, math.floor(cfg.itemLedgerSec * 1000 / math.max(count, 1))))
         if reader and Atlas.enabled and count > 0 then
-            turn = turn % #list + 1
-            local src = list[turn]
-            if src then L.check(src) end
+            turn = turn % count + 1
+            L.check(list[turn])
         end
     end
 end)

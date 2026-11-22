@@ -159,5 +159,13 @@ function M.sanitize(v, depth)
     return out
 end
 
+--- Gang name: nil when there is no gang; servers write that as none, None or an empty name.
+function M.gangName(name)
+    if type(name) ~= 'string' then return nil end
+    local bare = name:match('^%s*(.-)%s*$'):lower()
+    if bare == '' or bare == 'none' then return nil end
+    return name
+end
+
 AtlasLib.common = M
 return M
