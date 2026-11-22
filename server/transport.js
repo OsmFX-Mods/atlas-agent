@@ -574,9 +574,53 @@ function createTransport(options) {
   return { push, pump, start, stop, refuse, stats, loadSpoolDir, _state: st, _options: o, _enforceCap: enforceCap };
 }
 
-// Config scan: looks in server.cfg (and files it execs) for the token set with setr or sets.
-// This is a quick check; the client report in core.lua is the reliable one.
-async function scanCfgForExposedToken(argv, cwd) {
+// Sandbox: FXServer's Node 22 lets a resource read only resource folders. A read of server.cfg is refused and
+// FXServer prints "Filesystem permission check ... no device found" before Node sees the error, so it cannot be caught.
+function canReadServerFiles(nodeVersion) {
+  return Number(String(nodeVersion).split('.')[0]) < 22;
+}
+
+// Public vars: `sets` publishes a convar in the server's own /info.json, however and wherever it was set.
+// Resolves true or false, or null when the server gave no usable answer.
+function tokenIsPublic(port) {
+  return new Promise((resolve) => {
+    const req = http.get({ host: '127.0.0.1', port, path: '/info.json', timeout: 5000 }, (res) => {
+      const parts = [];
+      let size = 0;
+      res.on('data', (c) => {
+        size += c.length;
+        if (size > 4 * 1024 * 1024) req.destroy(new Error('info.json is too large'));
+        else parts.push(c);
+      });
+      res.on('error', () => resolve(null));
+      res.on('close', () => resolve(null)); // after 'end' has resolved this changes nothing
+      res.on('end', () => {
+        try {
+          const vars = JSON.parse(Buffer.concat(parts).toString('utf8')).vars;
+          resolve(vars ? Object.keys(vars).some((k) => k.toLowerCase() === 'atlas:token') : null);
+        } catch (e) {
+          resolve(null);
+        }
+      });
+    });
+    req.on('timeout', () => req.destroy(new Error('timeout')));
+    req.on('error', () => resolve(null));
+  });
+}
+
+// Watch: the server may not listen yet while it is still starting, so ask until it answers.
+async function watchPublicVars(getPort, check = tokenIsPublic, tries = 20, everyMs = 15000) {
+  for (let i = 0; i < tries; i++) {
+    const found = await check(getPort());
+    if (found !== null) return found;
+    if (i + 1 < tries) await new Promise((r) => setTimeout(r, everyMs));
+  }
+  return null;
+}
+
+// Config scan: looks for the token set with setr or sets on the command line and, where Node may read them, in
+// server.cfg and the files it execs. tokenIsPublic catches sets and the client report in core.lua catches setr.
+async function scanCfgForExposedToken(argv, cwd, readFiles = true) {
   // Command line: `+setr atlas:token ...` also sends the token to players
   for (let i = 0; i < argv.length - 1; i++) {
     const m = /^\+(setr|sets)$/i.exec(argv[i]);
@@ -584,6 +628,7 @@ async function scanCfgForExposedToken(argv, cwd) {
       return { file: 'the command line', command: m[1].toLowerCase() };
     }
   }
+  if (!readFiles) return null;
   const start = [];
   for (let i = 0; i < argv.length - 1; i++) if (argv[i] === '+exec') start.push(argv[i + 1]);
   if (start.length === 0) start.push('server.cfg');
@@ -608,7 +653,7 @@ async function scanCfgForExposedToken(argv, cwd) {
 }
 
 if (typeof module !== 'undefined' && module.exports) {
-  module.exports = { createTransport, serialize, scanCfgForExposedToken, isLoopback, DEFAULTS };
+  module.exports = { createTransport, serialize, scanCfgForExposedToken, canReadServerFiles, tokenIsPublic, watchPublicVars, isLoopback, DEFAULTS };
 }
 
 // FiveM wiring: runs only when FXServer globals exist.
@@ -641,13 +686,19 @@ if (typeof GetCurrentResourceName === 'function' && typeof on === 'function') {
     refuse('atlas:token is not set');
   }
 
-  scanCfgForExposedToken(process.argv || [], process.cwd()).then((hit) => {
+  const advice = '. Use `set atlas:token ...`, rotate the token in the Atlas dashboard, then restart ' + RES + '.';
+  scanCfgForExposedToken(process.argv || [], process.cwd(), canReadServerFiles(process.versions.node)).then((hit) => {
     if (hit) {
       refuse(`atlas:token is set with \`${hit.command}\` in ${hit.file}. ` +
-        (hit.command === 'setr' ? 'setr replicates it to every client' : 'sets publishes it in /info.json') +
-        '. Use `set atlas:token ...`, rotate the token in the Atlas dashboard, then restart ' + RES + '.');
+        (hit.command === 'setr' ? 'setr replicates it to every client' : 'sets publishes it in /info.json') + advice);
     }
   }).catch(() => {});
+
+  if (token) {
+    watchPublicVars(() => Number(GetConvar('netPort', '30120')) || 30120).then((found) => {
+      if (found) refuse('atlas:token is public in /info.json (set with `sets`)' + advice);
+    }).catch(() => {});
+  }
 
   on('atlas:internal:init', (info) => {
     if (!fromSelf() || initialised || !info || !info.boot) return;

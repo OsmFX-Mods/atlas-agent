@@ -8,7 +8,7 @@ const zlib = require('zlib');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { createTransport, serialize, scanCfgForExposedToken, isLoopback } = require('../server/transport.js');
+const { createTransport, serialize, scanCfgForExposedToken, canReadServerFiles, tokenIsPublic, watchPublicVars, isLoopback } = require('../server/transport.js');
 
 const BOOT_A = '01J9ZZZZZZZZZZZZZZZZZZZZZA';
 const BOOT_B = '01J9ZZZZZZZZZZZZZZZZZZZZZB';
@@ -550,6 +550,51 @@ test('cfg scan falls back to server.cfg, tolerates missing files and stops at de
   assert.strictEqual(await scanCfgForExposedToken([], dir), null);
   fs.writeFileSync(path.join(dir, 'l4.cfg'), 'setr atlas:token "x"\n');
   assert.strictEqual((await scanCfgForExposedToken([], dir)).command, 'setr');
+});
+
+test('cfg scan reads no file on a sandboxed Node, and still checks the command line', async () => {
+  const dir = tmpDir();
+  fs.writeFileSync(path.join(dir, 'server.cfg'), 'setr atlas:token "x"\n');
+  const read = fs.promises.readFile;
+  let reads = 0;
+  fs.promises.readFile = (...a) => { reads++; return read(...a); };
+  try {
+    assert.strictEqual(await scanCfgForExposedToken(['+exec', 'server.cfg'], dir, false), null);
+    assert.strictEqual(reads, 0);
+    assert.strictEqual((await scanCfgForExposedToken(['+sets', 'atlas:token', 'x'], dir, false)).command, 'sets');
+  } finally {
+    fs.promises.readFile = read;
+  }
+});
+
+test('config files are read only where Node is not sandboxed', () => {
+  assert.strictEqual(canReadServerFiles('16.9.1'), true);
+  assert.strictEqual(canReadServerFiles('22.23.4'), false);
+  assert.strictEqual(canReadServerFiles('24.0.0'), false);
+});
+
+test('public vars check finds a token set with sets, in any case', async () => {
+  let body = { vars: { sv_lan: 'true' }, resources: ['atlas-agent'] };
+  const s = http.createServer((req, res) => res.end(req.url === '/info.json' ? JSON.stringify(body) : ''));
+  await new Promise((r) => s.listen(0, '127.0.0.1', r));
+  const port = s.address().port;
+  assert.strictEqual(await tokenIsPublic(port), false);
+  body = { vars: { 'Atlas:Token': 'atl_live_x' } };
+  assert.strictEqual(await tokenIsPublic(port), true);
+  body = { vars: {}, resources: ['atlas:token'] };
+  assert.strictEqual(await tokenIsPublic(port), false);
+  await new Promise((r) => s.close(r));
+  assert.strictEqual(await tokenIsPublic(port), null, 'no answer is not a verdict');
+});
+
+test('public vars watch waits for the server to answer, then stops', async () => {
+  const answers = [null, null, true];
+  let calls = 0;
+  assert.strictEqual(await watchPublicVars(() => 1, async () => answers[calls++], 5, 1), true);
+  assert.strictEqual(calls, 3);
+  calls = 0;
+  assert.strictEqual(await watchPublicVars(() => 1, async () => { calls++; return null; }, 4, 1), null);
+  assert.strictEqual(calls, 4);
 });
 
 (async () => {

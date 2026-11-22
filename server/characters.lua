@@ -3,6 +3,7 @@
 
 local C = {}
 Atlas.characters = C
+local common = AtlasLib.common
 Atlas.lastLethal = Atlas.lastLethal or {} -- lastLethal: filled by the natives adapter, read to name a killer
 
 --- Load: a character became active for a player.
@@ -15,7 +16,7 @@ function C.load(src, c)
     p.job, p.grade, p.duty = c.job, c.grade, c.duty == true
     -- Paycheck: some frameworks send paychecks with an unknown reason, so money.change carries job_payment to identify them
     p.jobPayment = tonumber(c.jobPayment)
-    p.gang = c.gang
+    p.gang = common.gangName(c.gang)
     p.money = {}
     for k, v in pairs(c.money or {}) do p.money[k] = tonumber(v) end
     p.dead = c.dead == true
@@ -94,6 +95,7 @@ end
 function C.setGang(src, gang)
     local p = loaded(src)
     if not p then return end
+    gang = common.gangName(gang)
     if gang == p.gang then return end
     local from = p.gang
     p.gang = gang
