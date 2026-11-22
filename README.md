@@ -16,37 +16,20 @@
 
 This repository is the **Atlas agent**, the small resource you install on your game server. It watches what happens in your city and sends it to your Atlas dashboard. The heavy lifting runs on the Atlas side, so the agent stays light.
 
-> **Early access.** Atlas is free and open by invitation, for Qbox, QBCore and ESX servers, from a handful of players up to 228 online at once, the busiest server we have run so far. The agent needs a token from an Atlas dashboard to do anything, so [request access on the Atlas page](https://osmfxmods.com/atlas) first.
+> **Early access.** Atlas is free and open by invitation, for Qbox, QBCore and ESX servers, from a handful of players to more than 225 online at once. The agent needs a token from an Atlas dashboard to do anything, so [request access on the Atlas page](https://osmfxmods.com/atlas) first.
 
 ---
 
-## Proven in production
+## In production
 
-Real numbers from the hosted Atlas, as of 22 November 2026.
+| | Per minute | Per day | Per week |
+| :--- | ---: | ---: | ---: |
+| **Records ingested** | 3,500+ | 5 million+ | 36 million+ |
+| **Requests handled** | 175+ | 250,000+ | 1.8 million+ |
 
-| **24** | **146.9 million** | **99.97%** | **396** |
-| :---: | :---: | :---: | :---: |
-| game servers onboarded | data points recorded | uptime over 30 days | players tracked at once |
+**145 million+** records since launch · **10+** active game servers · **225+** players on a single server · **99.8%** uptime over 30 days
 
-| Throughput | Per minute | Per day | Per week | Record |
-| :--- | ---: | ---: | ---: | :--- |
-| **Events** | 3,597 | 5.18 million | 36.3 million | 243,753 in one minute, 6.90 million in one day, 40.8 million in one week |
-| **Requests** | 180 | 258,800 | 1.81 million | 510 in one minute, 308,960 in one day |
-
-| Since launch on 10 October 2026 | |
-| :--- | ---: |
-| Servers onboarded | 24 (14 connected today, 10 since removed) |
-| Busiest single server | 228 players online |
-| Unique players | 1,401 |
-| Play time | 50,660 hours in 27,891 sessions |
-| Player positions | 29.7 million |
-| Log lines | 6.37 million |
-| Item movements | 3.83 million |
-| Combat events | 546,557 |
-| Money transactions | 506,511 |
-| Requests that ended in a server error | 2 of 6.5 million (since 13 October) |
-
-<sub>An event is one stored record: a position, gameplay event, log line or performance sample (performance samples are 43% of them). Averages cover 15 to 21 November. Uptime is the share of 15-second intervals in which Atlas reported to our monitoring from 23 October to 21 November, not an external probe. Server errors count requests that reached Atlas.</sub>
+<sub>As of 22 November 2026. Rates are averages for 15 to 21 November, uptime covers 23 October to 21 November. Records are positions, game events, snapshots, logs and server metrics.</sub>
 
 ---
 
@@ -88,7 +71,7 @@ The agent only reads facts that already exist on your server.
 | :--- | :--- |
 | **Movement** | Player positions, sampled every 3 seconds (every second near a fight). A player who stands still is reported with a still marker every 30 seconds instead of a stream of identical positions. |
 | **Combat** | Damage, deaths and explosions. Shots fired are reported by the client in aggregate and checked by the server. |
-| **Money** | Every cash and bank change with its reason and the script behind it, plus a snapshot of balances every 15 minutes. |
+| **Money** | Cash and bank changes with their reason and, where it can be identified, the script behind them, plus a snapshot of balances every 15 minutes. |
 | **Items** | Moves, uses, purchases, crafting and items scripts add, from `ox_inventory` and `qb-inventory`, what scripts remove, and a daily census of items. See [Frameworks](docs/frameworks.md#frameworks) for how complete each inventory is. |
 | **Vehicles and medical** | Ownership and transfers from `qbx_vehicles`, vehicle ownership from the database, check-ins and revives from `qbx_medical` and `qb-ambulancejob`, and deaths and revives from `esx_death` (or `esx_ambulancejob` on older ESX). |
 | **Sessions** | Joins, leaves, character changes, character creation and deletion, job and gang changes, resource restarts. |
@@ -98,7 +81,7 @@ The agent only reads facts that already exist on your server.
 
 **Privacy.** Player names and the identifiers `license`, `license2`, `discord`, `fivem`, `steam`, `xbl` and `live` are sent so Atlas can tell players apart. IP addresses are never sent.
 
-**Your token stays secret.** The token is read only by the transport script and is never replicated to players. If it is set the wrong way, the agent refuses to run and tells you why: `sets` is found in the server's own `/info.json`, `setr` is reported by the first player's client, and either is found on the command line (and in `server.cfg` on servers older than Node 22).
+**Your token stays secret.** The token is read only by the transport script. Always set it with `set`: `setr` sends it to players and `sets` publishes it. The agent tries to detect both and stop, but it cannot catch every setup (for example, `sets` on a server that listens on one specific IP address), so check your cfg.
 
 ---
 
@@ -149,13 +132,9 @@ Both are restricted to the console, or to ACE `command.atlas_selftest` and `comm
 
 ## Troubleshooting
 
-**`Filesystem permission check from 'atlas-agent' for permission fs.read on resource '...server.cfg' - no device found`**
+**`Filesystem permission check from 'atlas-agent' ... server.cfg' - no device found`**: printed by v0.3.3 and older on FXServer builds with Node 22. Update to v0.3.4 or newer. Do not grant the resource extra filesystem permissions.
 
-Agent v0.3.3 and older read `server.cfg` at startup to check how the token is set. FXServer builds on Node 22 only let a resource read inside resource folders, so they refuse and print this line. It does not affect what the agent collects, but that token check does not run. Releases after v0.3.3 no longer read the file. Update when one is available, and do not grant the resource extra filesystem permissions for it. Until then, make sure your cfg says `set atlas:token`, not `setr` or `sets`.
-
-**`server/item_ledger.lua:80: attempt to perform 'n%0'`**
-
-Agent v0.3.3 and older stop the item ledger when the last player leaves at the wrong moment. It is fixed in releases after v0.3.3. On an older one, restarting the resource starts the ledger again.
+**`server/item_ledger.lua:80: attempt to perform 'n%0'`**: a bug in v0.3.2 and v0.3.3 that stops the item ledger until the resource restarts. Update to v0.3.4 or newer.
 
 ---
 
